@@ -16,9 +16,19 @@ class TD3:
         tau=0.005,
         policy_noise=0.2,
         noise_clip=0.5,
-        policy_freq=2
+        policy_freq=2,
+        use_transformer=False,
+        seq_len=32
     ):
-        self.actor = Actor(state_dim, action_dim, max_action).to(device) #Remember, we're copying the NN here from the blueprint (the class from model.py)
+        self.use_transformer = use_transformer
+        self.seq_len = seq_len
+        
+        if use_transformer:
+            from model import TransformerActor
+            self.actor = TransformerActor(state_dim, action_dim, max_action).to(device)
+        else:
+            self.actor = Actor(state_dim, action_dim, max_action).to(device) #Remember, we're copying the NN here from the blueprint (the class from model.py)
+            
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
@@ -38,22 +48,41 @@ class TD3:
 
         self.total_it = 0
 
-    def select_action(self, state):
+    def select_action(self, state, state_history=None, action_history=None):
         """Actor selects an action for a given state."""
-        state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
-        return self.actor(state).cpu().data.numpy().flatten() #.actor() shoves state data into the internal forward function
+        if self.use_transformer:
+            # Transformer needs (B, L, Dim)
+            state_seq = torch.FloatTensor(state_history).unsqueeze(0).to(self.device)
+            action_seq = torch.FloatTensor(action_history).unsqueeze(0).to(self.device)
+            return self.actor(state_seq, action_seq).cpu().data.numpy().flatten()
+        else:
+            state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
+            return self.actor(state).cpu().data.numpy().flatten() #.actor() shoves state data into the internal forward function
 
     def train(self, replay_buffer, batch_size=256):
         """Perform a single step of the TD3 training loop."""
         self.total_it += 1
 
         # 1. Sample from the Replay Buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size) #replay_buffer is defined in train.py, it's not here as this isn't the "pantry"
+        if self.use_transformer:
+            # Sequence sampling for the Transformer
+            sample = replay_buffer.sample_sequence(batch_size, self.seq_len)
+            if sample is None:
+                return # Not enough data to train yet
+            state_seq, action_seq, next_state_seq, next_action_seq, state, action, next_state, reward, not_done = sample
+        else:
+            state, action, next_state, reward, not_done = replay_buffer.sample(batch_size) #replay_buffer is defined in train.py, it's not here as this isn't the \"pantry\"
 
         with torch.no_grad():
             # 2. Select next action with Target Policy Smoothing
-            noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip) #_like() makes it so that it has dimensions of whatever's passed
-            next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
+            if self.use_transformer:
+                # Target actor uses the shifted history for the next step
+                next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
+            else:
+                next_action_prediction = self.actor_target(next_state)
+
+            noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+            next_action = (next_action_prediction + noise).clamp(-self.max_action, self.max_action)
 
             # 3. Compute Target Q-value using Clipped Double-Q
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)
@@ -71,7 +100,12 @@ class TD3:
         # 5. Delayed Policy Updates
         if self.total_it % self.policy_freq == 0:
             # Update Actor
-            actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
+            if self.use_transformer:
+                # Transformer uses sequence context
+                actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
+            else:
+                actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
+                
             self.actor_optimizer.zero_grad()                              #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
             actor_loss.backward()
             self.actor_optimizer.step() #This is Gradient Descent (It auto takes the blueprint given by backprop)

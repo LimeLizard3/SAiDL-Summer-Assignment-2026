@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import math
 
 class RunningMeanStd:
     """Tracks the running mean and standard deviation of data."""
@@ -95,3 +96,97 @@ class Critic(nn.Module):
         q1 = F.relu(self.l2(q1))
         q1 = self.l3(q1)
         return q1
+
+
+class TransformerActor(nn.Module):
+    """
+    A Causal Transformer Actor that uses history to decide actions.
+    Adapted from the Core-ML Advanced Transformer.
+    """
+    def __init__(self, state_dim, action_dim, max_action, d_model=128, n_heads=4, n_layers=2, dropout=0.1):
+        super(TransformerActor, self).__init__()
+        self.max_action = max_action
+        
+        # 1. Input Embedding: Maps raw sensors to Transformer space
+        self.state_emb = nn.Linear(state_dim, d_model)
+        self.action_emb = nn.Linear(action_dim, d_model)
+        self.drop = nn.Dropout(dropout)
+        
+        # 2. Transformer Blocks
+        self.blocks = nn.ModuleList([
+            TransformerBlock_RL(d_model, n_heads, dropout) for _ in range(n_layers)
+        ])
+        
+        # 3. LayerNorm and Final Head
+        self.ln_f = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, action_dim)
+
+    def forward(self, state_seq, action_seq):
+        # state_seq: (B, L, state_dim)
+        # action_seq: (B, L, action_dim)
+        
+        # Sum the state and action embeddings (standard for Decision Transformers)
+        x = self.state_emb(state_seq) + self.action_emb(action_seq)
+        x = self.drop(x)
+        
+        # Build a causal mask (don't look at the future!)
+        seq_len = x.size(1)
+        mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).view(1, 1, seq_len, seq_len)
+        
+        for block in self.blocks:
+            x = block(x, mask=mask)
+            
+        x = self.ln_f(x)
+        
+        # We only care about the very last decision in the sequence
+        last_token = x[:, -1, :]
+        return self.max_action * torch.tanh(self.head(last_token))
+
+
+class TransformerBlock_RL(nn.Module):
+    """Simplified Transformer Block for RL."""
+    def __init__(self, d_model, n_heads, dropout):
+        super().__init__()
+        self.attn = StandardAttention_RL(d_model, n_heads, dropout)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4),
+            nn.GELU(),
+            nn.Linear(d_model * 4, d_model),
+            nn.Dropout(dropout)
+        )
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+
+    def forward(self, x, mask=None):
+        x = x + self.attn(self.ln1(x), mask=mask)
+        x = x + self.ffn(self.ln2(x))
+        return x
+
+
+class StandardAttention_RL(nn.Module):
+    """Standard Causal Attention adapted for RL sequences."""
+    def __init__(self, d_model, n_heads, dropout=0.1):
+        super().__init__()
+        self.n_heads = n_heads
+        self.d_k = d_model // n_heads
+        
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask=None):
+        bsz, seq_len, _ = x.size()
+        q = self.q_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        k = self.k_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        v = self.v_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, float('-inf'))
+            
+        attn_weights = F.softmax(scores, dim=-1)
+        output = torch.matmul(self.dropout(attn_weights), v)
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
+        return self.out_proj(output)
