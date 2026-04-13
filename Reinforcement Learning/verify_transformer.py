@@ -10,8 +10,8 @@ def test_transformer_short():
     env_name = "Hopper-v5"
     env = gym.make(env_name)
     state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-    max_action = float(env.action_space.high[0])
+    action_dim = env.action_space.shape[0] #shape[0] usually refers to length
+    max_action = float(env.action_space.high[0]) #high[0] also refers to physical length/boundary
     device = torch.device("cpu") # Use CPU for quick test
     
     seq_len = 8
@@ -19,7 +19,7 @@ def test_transformer_short():
     
     policy = TD3(state_dim, action_dim, max_action, device, use_transformer=True, seq_len=seq_len)
     buffer = ReplayBuffer(state_dim, action_dim, device=device)
-    normalizer = Normalizer(shape=(state_dim,))
+    normalizer = Normalizer(shape=(state_dim,)) #The comma makes it a tuple, without it you'd get an error stating "int object isn't iterable"
     
     state, _ = env.reset()
     state_history = deque([np.zeros(state_dim) for _ in range(seq_len)], maxlen=seq_len)

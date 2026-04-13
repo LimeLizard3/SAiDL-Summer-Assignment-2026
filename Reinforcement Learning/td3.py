@@ -35,7 +35,7 @@ class TD3:
         self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
-        #We use a concept called BOOTSTRAPING here during copy.deepcopy() by which the model makes its own "Y-labels" and predicts from there; if we didn't have that, the base would
+        #We use a concept called BOOTSTRAPPING here during copy.deepcopy() by which the model makes its own "Y-labels" and predicts from there; if we didn't have that, the base would
         #keep changing and the model wouldn't learn at all due to an unstable base.
 
         self.max_action = max_action
@@ -54,9 +54,14 @@ class TD3:
             # Transformer needs (B, L, Dim)
             state_seq = torch.FloatTensor(state_history).unsqueeze(0).to(self.device)
             action_seq = torch.FloatTensor(action_history).unsqueeze(0).to(self.device)
+            #Remember when we converted deques to lists? This is why, so that we could convert them to tensors
             return self.actor(state_seq, action_seq).cpu().data.numpy().flatten()
+            #.cpu() brings it to the physics engine. GPU is where the AI lives but the game lives on the CPU as that's where eqns are processed for it
+            #data.numpy() strips PyTorch baggage away and converts raw Nos into a NumPY array (also gymnasium doesn't know what a Tensor is)
+            #flatten() squashes away extra brackets so that the physics engine doesn't crash
         else:
-            state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
+            state = torch.FloatTensor(state.reshape(1, -1)).to(self.device) #NOTE: We could also just write .unsqueeze(0) and get literally the exact same thing, but hey
+            #1 means add 1 row, -1 means "adjust with me" RE columns cos the No. of actions could change
             return self.actor(state).cpu().data.numpy().flatten() #.actor() shoves state data into the internal forward function
 
     def train(self, replay_buffer, batch_size=256):
@@ -71,7 +76,7 @@ class TD3:
                 return # Not enough data to train yet
             state_seq, action_seq, next_state_seq, next_action_seq, state, action, next_state, reward, not_done = sample
         else:
-            state, action, next_state, reward, not_done = replay_buffer.sample(batch_size) #replay_buffer is defined in train.py, it's not here as this isn't the \"pantry\"
+            state, action, next_state, reward, not_done = replay_buffer.sample(batch_size) #replay_buffer is defined in train.py, it's not here as this isn't the "pantry"
 
         with torch.no_grad():
             # 2. Select next action with Target Policy Smoothing
@@ -81,7 +86,9 @@ class TD3:
             else:
                 next_action_prediction = self.actor_target(next_state)
 
-            noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+            noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip) 
+            #_like() makes it so that it has dimensions of whatever's passed
+            #.clamp(min,max): if smaller than min, forced upto min and bigger than max, forced down to max
             next_action = (next_action_prediction + noise).clamp(-self.max_action, self.max_action)
 
             # 3. Compute Target Q-value using Clipped Double-Q
@@ -105,10 +112,12 @@ class TD3:
                 actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
             else:
                 actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
-                
-            self.actor_optimizer.zero_grad()                              #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
+            self.actor_optimizer.zero_grad()                                  #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
             actor_loss.backward()
             self.actor_optimizer.step() #This is Gradient Descent (It auto takes the blueprint given by backprop)
+
+            #When we optimize, we aren't changing our Q score at all, we're just working around the optimization algos to ensure that they
+            #understand that a more -ve loss translates into a higher Q values which translates into better actions
 
             # Soft Update Target Networks
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()): #zip pairs data together, .parameters() gets the list of parameters for each model
