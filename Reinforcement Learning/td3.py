@@ -39,9 +39,6 @@ class TD3:
         #We use a concept called BOOTSTRAPPING here during copy.deepcopy() by which the model makes its own "Y-labels" and predicts from there; if we didn't have that, the base would
         #keep changing and the model wouldn't learn at all due to an unstable base.
 
-        # Setup Automatic Mixed Precision (AMP) to use rapid 16-bit Tensor Core math
-        self.scaler = torch.amp.GradScaler('cuda')
-
         self.max_action = max_action
         self.gamma = gamma
         self.tau = tau
@@ -85,13 +82,11 @@ class TD3:
 
         with torch.no_grad():
             # 2. Select next action with Target Policy Smoothing
-            device_type = "cuda" if "cuda" in str(self.device) else "cpu"
-            with torch.autocast(device_type=device_type):
-                if self.use_transformer:
-                    # Target actor uses the shifted history for the next step
-                    next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
-                else:
-                    next_action_prediction = self.actor_target(next_state)
+            if self.use_transformer:
+                # Target actor uses the shifted history for the next step
+                next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
+            else:
+                next_action_prediction = self.actor_target(next_state)
 
             noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip) 
             #_like() makes it so that it has dimensions of whatever's passed
@@ -99,36 +94,29 @@ class TD3:
             next_action = (next_action_prediction + noise).clamp(-self.max_action, self.max_action)
 
             # 3. Compute Target Q-value using Clipped Double-Q
-            with torch.autocast(device_type=device_type):
-                target_Q1, target_Q2 = self.critic_target(next_state, next_action)
+            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
             target_Q = torch.min(target_Q1, target_Q2)
             target_Q = reward + not_done * self.gamma * target_Q #Reward is the cold hard truth that just happened, and the other terms are to look towards the future to   
                                                                  #PREDICT what will happen and how many more points the AI will earn before not_done=0
         # 4. Update Critics
-        device_type = "cuda" if "cuda" in str(self.device) else "cpu"
-        with torch.autocast(device_type=device_type):
-            current_Q1, current_Q2 = self.critic(state, action)
-            critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) #mse = Mean Squared Error
+        current_Q1, current_Q2 = self.critic(state, action)
+        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) #mse = Mean Squared Error
 
         self.critic_optimizer.zero_grad() #Cleaning out the gradients so that the AI doesn't get confused from previous training cycles
-        self.scaler.scale(critic_loss).backward() #Backprop using AMP scaler
-        self.scaler.step(self.critic_optimizer) #This is Gradient Descent
-        self.scaler.update()
+        critic_loss.backward() #Backprop, THAT'S why we clean the gradients right before this
+        self.critic_optimizer.step() #This is Gradient Descent
 
         # 5. Delayed Policy Updates
         if self.total_it % self.policy_freq == 0:
             # Update Actor
-            device_type = "cuda" if "cuda" in str(self.device) else "cpu"
-            with torch.autocast(device_type=device_type):
-                if self.use_transformer:
-                    # Transformer uses sequence context
-                    actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
-                else:
-                    actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
+            if self.use_transformer:
+                # Transformer uses sequence context
+                actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
+            else:
+                actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
             self.actor_optimizer.zero_grad()                                  #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
-            self.scaler.scale(actor_loss).backward()
-            self.scaler.step(self.actor_optimizer) #This is Gradient Descent (It auto takes the blueprint given by backprop)
-            self.scaler.update()
+            actor_loss.backward()
+            self.actor_optimizer.step() #This is Gradient Descent (It auto takes the blueprint given by backprop)
 
             #When we optimize, we aren't changing our Q score at all, we're just working around the optimization algos to ensure that they
             #understand that a more -ve loss translates into a higher Q values which translates into better actions
