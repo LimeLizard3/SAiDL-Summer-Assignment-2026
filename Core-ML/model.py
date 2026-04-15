@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from attention_variants import SlidingWindowAttention, MultiQueryAttention, LinearAttention
+from attention_variants import SlidingWindowAttention, MultiQueryAttention, LinearAttention, AFTAttention
 from positional_logic import apply_rotary_emb, build_alibi_bias
 from conv_logic import CausalConv1d, DepthwiseSeparableCausalConv1d
 
@@ -73,6 +73,8 @@ class TransformerBlock(nn.Module):
             self.attn = LinearAttention(config.d_model, config.n_heads, config.dropout)
         elif config.attention_type == "sliding_window":
             self.attn = SlidingWindowAttention(config.d_model, config.n_heads, config.window_size, config.dropout)
+        elif config.attention_type == "aft":
+            self.attn = AFTAttention(config.d_model, config.n_heads, config.max_seq_len, config.aft_mode, config.aft_window_size, config.dropout)
         else: # Default is "standard"
             self.attn = StandardAttention(config.d_model, config.n_heads, config.dropout)
             

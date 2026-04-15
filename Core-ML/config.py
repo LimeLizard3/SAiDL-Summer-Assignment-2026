@@ -11,8 +11,12 @@ class TransformerConfig:
     dropout: float = 0.1
     
     # Architecture Variants
-    attention_type: str = "standard" # Options: "standard", "mqa", "linear", "sliding_window"
+    attention_type: str = "standard" # Options: "standard", "mqa", "linear", "sliding_window", "aft"
     window_size: int = 50 # Only used if attention_type == "sliding_window"
+    
+    # AFT Options (Bonus Task)
+    aft_mode: str = "full" # Options: "full", "simple", "local", "conv"
+    aft_window_size: int = 50 # Used if aft_mode == "local"
     
     # Positional Variants (Task 3)
     pos_type: str = "absolute" # Options: "absolute", "rope", "alibi"
