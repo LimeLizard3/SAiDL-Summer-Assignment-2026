@@ -113,7 +113,7 @@ class TD3:
         self.critic_optimizer.zero_grad() #Cleaning out the gradients so that the AI doesn't get confused from previous training cycles
         self.scaler.scale(critic_loss).backward() #Backprop using AMP scaler
         self.scaler.step(self.critic_optimizer) #This is Gradient Descent
-        self.scaler.update()
+        self.scaler.update() #Makes sure that the math didn't literally explode into huge values
 
         # 5. Delayed Policy Updates
         if self.total_it % self.policy_freq == 0:
