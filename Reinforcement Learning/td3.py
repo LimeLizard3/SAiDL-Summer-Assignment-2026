@@ -1,5 +1,6 @@
 import copy
 import torch
+import numpy as np
 import torch.nn.functional as F
 from model import Actor, Critic
 
@@ -52,9 +53,10 @@ class TD3:
         """Actor selects an action for a given state."""
         if self.use_transformer:
             # Transformer needs (B, L, Dim)
-            state_seq = torch.FloatTensor(state_history).unsqueeze(0).to(self.device)
-            action_seq = torch.FloatTensor(action_history).unsqueeze(0).to(self.device)
+            state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device)
+            action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device)
             #Remember when we converted deques to lists? This is why, so that we could convert them to tensors
+            #IMPORTANT DEBUGGING: we use np.array to prevent a CPU bottleneck
             return self.actor(state_seq, action_seq).cpu().data.numpy().flatten()
             #.cpu() brings it to the physics engine. GPU is where the AI lives but the game lives on the CPU as that's where eqns are processed for it
             #data.numpy() strips PyTorch baggage away and converts raw Nos into a NumPY array (also gymnasium doesn't know what a Tensor is)
