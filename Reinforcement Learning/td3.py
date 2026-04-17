@@ -46,6 +46,10 @@ class TD3:
         self.noise_clip = noise_clip
         self.policy_freq = policy_freq
         self.device = device
+        
+        # [AMP] Initializes the Gradient Scaler. This acts as a digital shock-absorber that multiplies the AI's error
+        # before backward propagation, preventing the tiny 16-bit decimals from crashing into 0.0 (underflowing) or reaching the limit and overflowing
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.device.type == 'cuda')
 
         self.total_it = 0
 
@@ -81,42 +85,64 @@ class TD3:
             state, action, next_state, reward, not_done = replay_buffer.sample(batch_size) #replay_buffer is defined in train.py, it's not here as this isn't the "pantry"
 
         with torch.no_grad():
-            # 2. Select next action with Target Policy Smoothing
-            if self.use_transformer:
-                # Target actor uses the shifted history for the next step
-                next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
-            else:
-                next_action_prediction = self.actor_target(next_state)
-
-            noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip) 
-            #_like() makes it so that it has dimensions of whatever's passed
-            #.clamp(min,max): if smaller than min, forced upto min and bigger than max, forced down to max
-            next_action = (next_action_prediction + noise).clamp(-self.max_action, self.max_action)
-
-            # 3. Compute Target Q-value using Clipped Double-Q
-            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
-            target_Q = torch.min(target_Q1, target_Q2)
-            target_Q = reward + not_done * self.gamma * target_Q #Reward is the cold hard truth that just happened, and the other terms are to look towards the future to   
-                                                                 #PREDICT what will happen and how many more points the AI will earn before not_done=0
+            # [AMP] Intercepts heavy mathematical formulas here and dynamically shrinks the data
+            # down to 16-bit to turbocharge computation speed on the GPU Tensor Cores.
+            with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
+                # 2. Select next action with Target Policy Smoothing
+                if self.use_transformer:
+                    # Target actor uses the shifted history for the next step
+                    next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
+                else:
+                    next_action_prediction = self.actor_target(next_state)
+    
+                noise = (torch.randn_like(next_action_prediction) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip) 
+                #_like() makes it so that it has dimensions of whatever's passed
+                #.clamp(min,max): if smaller than min, forced upto min and bigger than max, forced down to max
+                next_action = (next_action_prediction + noise).clamp(-self.max_action, self.max_action)
+    
+                # 3. Compute Target Q-value using Clipped Double-Q
+                target_Q1, target_Q2 = self.critic_target(next_state, next_action)
+                target_Q = torch.min(target_Q1, target_Q2)
+                target_Q = reward + not_done * self.gamma * target_Q #Reward is the cold hard truth that just happened, and the other terms are to look towards the future to   
+                                                                     #PREDICT what will happen and how many more points the AI will earn before not_done=0
+        
         # 4. Update Critics
-        current_Q1, current_Q2 = self.critic(state, action)
-        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) #mse = Mean Squared Error
+        # [AMP] Automatically utilizes super-fast 16-bit math for calculating the Critic's error (loss).
+        with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
+            current_Q1, current_Q2 = self.critic(state, action)
+            critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) #mse = Mean Squared Error
 
         self.critic_optimizer.zero_grad() #Cleaning out the gradients so that the AI doesn't get confused from previous training cycles
-        critic_loss.backward() #Backprop, THAT'S why we clean the gradients right before this
-        self.critic_optimizer.step() #This is Gradient Descent
+        
+        # [AMP] Scales the loss up by a massive factor safely so it doesn't break the float limits during backprop.
+        self.scaler.scale(critic_loss).backward() #Backprop, scaled for AMP
+        
+        # [AMP] Shrinks the math back down to normal and applies the Gradient Descent updates to the Critics.
+        self.scaler.step(self.critic_optimizer) #This is Gradient Descent
+        
+        # [AMP] Readjusts the multiplier shield up or down so future runs stay mathematically stable.
+        self.scaler.update() #Update scaler multipliers
 
         # 5. Delayed Policy Updates
         if self.total_it % self.policy_freq == 0:
             # Update Actor
-            if self.use_transformer:
-                # Transformer uses sequence context
-                actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
-            else:
-                actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
-            self.actor_optimizer.zero_grad()                                  #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
-            actor_loss.backward()
-            self.actor_optimizer.step() #This is Gradient Descent (It auto takes the blueprint given by backprop)
+            # [AMP] Supercharges the Actor's Transformer sequence math using 16-bit precision.
+            with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
+                if self.use_transformer:
+                    # Transformer uses sequence context
+                    actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
+                else:
+                    actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
+            self.actor_optimizer.zero_grad()                                      #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
+            
+            # [AMP] Expands the Actor loss to stop it from underflowing (hitting zero).
+            self.scaler.scale(actor_loss).backward()
+            
+            # [AMP] Un-scales the matrix and tweaks the Actor's neural weights safely.
+            self.scaler.step(self.actor_optimizer) #This is Gradient Descent (It auto takes the blueprint given by backprop)
+            
+            # [AMP] Automatically manages the internal 16-bit overflow thresholds for the Actor.
+            self.scaler.update()
 
             #When we optimize, we aren't changing our Q score at all, we're just working around the optimization algos to ensure that they
             #understand that a more -ve loss translates into a higher Q values which translates into better actions

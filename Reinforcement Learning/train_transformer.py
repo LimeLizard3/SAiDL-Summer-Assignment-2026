@@ -50,7 +50,7 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
     print(f"---------------------------------------")
     return avg_reward
 
-def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25e3, batch_size=256):
+def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=250000, start_timesteps=25e3, batch_size=256):
     """Trains the Transformer-TD3 agent for a specific history length."""
     print(f"Training Transformer L={seq_len} Seed={seed}")
     
@@ -121,6 +121,7 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=1e6, 
             eval_reward = eval_policy(policy, env_name, seed, normalizer, seq_len)
             evaluations.append(eval_reward) #Important for drawing the LEARNING CURVE 
             np.save(f"./results_transformer/TD3_L{seq_len}_S{seed}", evaluations) #Save to hard drive incase of crash
+            policy.save(f"./models/TD3_Transformer_L{seq_len}_S{seed}") #Save the model weights so we don't lose progress!
 
     return evaluations
 
