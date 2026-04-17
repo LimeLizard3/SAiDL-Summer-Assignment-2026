@@ -146,5 +146,5 @@ if __name__ == "__main__":
     plt.xlabel("Evaluation Step (x5000)")
     plt.ylabel("Average Reward")
     plt.legend()
-    plt.savefig("transformer_comparison_results.png")
+    plt.savefig("./analysis/transformer_comparison_results.png")
     plt.show()
