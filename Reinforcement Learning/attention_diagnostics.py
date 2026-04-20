@@ -69,38 +69,42 @@ def run_diagnostics(model_path, env_name="Hopper-v5", seq_len=32, episodes=3, mo
     return mean_attn_weights, episode_entropies
 
 def plot_diagnostics(clean_data, partial_data, seq_len):
-    plt.style.use('dark_background')
+    plt.style.use('default')
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    
+    # Use standard contrasting colors (Blue for Clean, Orange for Robust)
+    clean_color = '#1f77b4' 
+    robust_color = '#ff7f0e'
     
     # 1. Mean Attention Weights Comparison
     timesteps = np.arange(-(seq_len-1), 1)
-    ax1.plot(timesteps, clean_data[0], color='#00d4ff', linewidth=2, label='Fully Observable (Broad Focus)')
-    ax1.plot(timesteps, partial_data[0], color='#ff007f', linewidth=3, label='Robust Survivor (Surgical Focus)')
+    ax1.plot(timesteps, clean_data[0], color=clean_color, linewidth=2, label='Fully Observable (Broad Focus)')
+    ax1.plot(timesteps, partial_data[0], color=robust_color, linewidth=3, label='Robust Survivor (Surgical Focus)')
     
     # Annotate the spikes
-    ax1.annotate('Deriving Velocity', xy=(0, partial_data[0][-1]), xytext=(-10, 0.08),
-                 arrowprops=dict(facecolor='white', shrink=0.05, width=1))
+    ax1.annotate('Deriving Velocity', xy=(0, partial_data[0][-1]), xytext=(-12, 0.08),
+                 arrowprops=dict(facecolor='black', shrink=0.05, width=1))
     ax1.annotate('Deep Memory Anchor', xy=(-31, partial_data[0][0]), xytext=(-31, 0.04),
-                 arrowprops=dict(facecolor='white', shrink=0.05, width=1))
+                 arrowprops=dict(facecolor='black', shrink=0.05, width=1))
 
     ax1.set_title("The Transformer's Mind: Attention Strategy Comparison", fontsize=14, pad=15)
     ax1.set_xlabel("Relative Timestep (History <--- 0 ---> Present)", fontsize=11)
     ax1.set_ylabel("Attention Contribution", fontsize=11)
     ax1.legend(loc='upper left')
-    ax1.grid(True, alpha=0.2, linestyle='--')
+    ax1.grid(True, alpha=0.3, linestyle='--')
     
     # 2. Entropy Analysis
     clean_ep = clean_data[1][0]
     partial_ep = partial_data[1][0]
     
-    ax2.plot(clean_ep[:250], color='#00d4ff', alpha=0.6, label='Clean Entropy')
-    ax2.plot(partial_ep[:250], color='#ff007f', alpha=0.9, label='Robust Entropy (Precision Focus)')
+    ax2.plot(clean_ep[:250], color=clean_color, alpha=0.5, label='Clean Entropy')
+    ax2.plot(partial_ep[:250], color=robust_color, alpha=0.8, label='Robust Entropy (Precision Focus)')
     
     ax2.set_title("Decision Sharpness: Attention Entropy Over Time", fontsize=14, pad=15)
     ax2.set_xlabel("Steps in Episode", fontsize=11)
     ax2.set_ylabel("Entropy H(At)", fontsize=11)
     ax2.legend()
-    ax2.grid(True, alpha=0.2, linestyle='--')
+    ax2.grid(True, alpha=0.3, linestyle='--')
     
     plt.tight_layout()
     if not os.path.exists("./analysis"):
