@@ -14,9 +14,10 @@ class WikiTextDataset(Dataset):
     def __getitem__(self, idx):
         start = idx * self.seq_len
         end = start + self.seq_len
+        #The whole thing cuts out one chunk
         chunk = self.data[start:end+1]
-        x = torch.tensor(chunk[:-1], dtype=torch.long)
-        y = torch.tensor(chunk[1:], dtype=torch.long)
+        x = torch.tensor(chunk[:-1], dtype=torch.long) #Everything except the last item
+        y = torch.tensor(chunk[1:], dtype=torch.long) #Everything except the 1st item (shifted 1 in the future)
         return x, y
 
 def get_dataloaders(seq_len=1024, batch_size=16):
@@ -25,7 +26,7 @@ def get_dataloaders(seq_len=1024, batch_size=16):
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
     
     # Initialize tokenizer (using gpt2 tokenizer for basic BPE)
-    enc = tiktoken.get_encoding("gpt2")
+    enc = tiktoken.get_encoding("gpt2") #Converts raw text into a sequence of int IDs
     
     def encode_split(split):
         print(f"Tokenizing {split} split...")
