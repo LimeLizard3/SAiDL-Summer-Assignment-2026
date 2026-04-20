@@ -60,13 +60,13 @@ class ReplayBuffer:
         #We're padding with 0s because we're respecting the "done" boundary. Imagine if it assumed that once you die you teleport so it's a great
         #way to travel, so, we pad everything with 0s (these are the "blank books" we're starting out with)
         for i, idx in enumerate(ind): #Loop through ind, but also provide a counter on which loop I'm on 
-             #Sadly we require a for loop here because dealing with sequences and boundaries is complex enough to warrant it
+             #Sadly we require a for loop here because dealing with sequences and boundaries are complex enough to warrant it
 
             # 1. Current Step Sequence (The windows)
             s_win = self.state[idx-seq_len+1 : idx+1]
             a_win = self.action[idx-seq_len+1 : idx] #Length L-1 as transformer is supposed to look at current state, but not the future
             n_done_win = self.not_done[idx-seq_len+1 : idx+1] #Our 1D array of flags
-            #
+            
             boundary = np.where(n_done_win[:-1] == 0)[0] #Checks the past for deaths
             #[:-1] slices off the last index. If Mario dies on the last action, it doesn't matter as it's a "perfect life cycle"
             #.where(...)[0] is just formatting so that we don't get a weird tuple
@@ -118,3 +118,68 @@ class ReplayBuffer:
             torch.FloatTensor(self.reward[ind]).to(self.device),
             torch.FloatTensor(self.not_done[ind]).to(self.device)
         )
+
+    def sample_segment_pairs(self, batch_size, segment_len):
+        """Sample pairs of continuous segments for RLHF preference training."""
+        if self.size < segment_len + 1:
+            return None
+
+        # Sample starting indices for segment 1 and segment 2
+        # We ensure they have enough room and don't overlap for better diversity
+        ind1 = np.random.randint(0, self.size - segment_len, size=batch_size)
+        ind2 = np.random.randint(0, self.size - segment_len, size=batch_size)
+
+        s1 = np.zeros((batch_size, segment_len, self.state.shape[1]))
+        a1 = np.zeros((batch_size, segment_len, self.action.shape[1]))
+        r1 = np.zeros((batch_size, 1))
+
+        s2 = np.zeros((batch_size, segment_len, self.state.shape[1]))
+        a2 = np.zeros((batch_size, segment_len, self.action.shape[1]))
+        r2 = np.zeros((batch_size, 1))
+
+        for i in range(batch_size):
+            # Extract segment 1
+            idx1 = ind1[i]
+            s1[i] = self.state[idx1 : idx1 + segment_len]
+            a1[i] = self.action[idx1 : idx1 + segment_len]
+            # Accumulate ground truth rewards for labeling
+            r1[i] = np.sum(self.reward[idx1 : idx1 + segment_len])
+
+            # Extract segment 2
+            idx2 = ind2[i]
+            s2[i] = self.state[idx2 : idx2 + segment_len]
+            a2[i] = self.action[idx2 : idx2 + segment_len]
+            r2[i] = np.sum(self.reward[idx2 : idx2 + segment_len])
+
+        return (
+            torch.FloatTensor(s1).to(self.device),
+            torch.FloatTensor(a1).to(self.device),
+            torch.FloatTensor(r1).to(self.device),
+            torch.FloatTensor(s2).to(self.device),
+            torch.FloatTensor(a2).to(self.device),
+            torch.FloatTensor(r2).to(self.device)
+        )
+
+    def save(self, filename):
+        """Save the replay buffer to a file."""
+        np.savez_compressed(
+            filename + "_buffer.npz",
+            state=self.state,
+            action=self.action,
+            reward=self.reward,
+            next_state=self.next_state,
+            not_done=self.not_done,
+            ptr=np.array([self.ptr]),
+            size=np.array([self.size])
+        )
+
+    def load(self, filename):
+        """Load the replay buffer from a file."""
+        data = np.load(filename + "_buffer.npz")
+        self.state = data["state"]
+        self.action = data["action"]
+        self.reward = data["reward"]
+        self.next_state = data["next_state"]
+        self.not_done = data["not_done"]
+        self.ptr = int(data["ptr"][0])
+        self.size = int(data["size"][0])

@@ -2,6 +2,7 @@ import copy
 import torch
 import numpy as np
 import torch.nn.functional as F
+import os
 from model import Actor, Critic
 
 class TD3:
@@ -53,22 +54,14 @@ class TD3:
 
         self.total_it = 0
 
-    def select_action(self, state, state_history=None, action_history=None):
+    def select_action(self, state, state_history=None, action_history=None, return_attn=False):
         """Actor selects an action for a given state."""
         if self.use_transformer:
-            # Transformer needs (B, L, Dim)
-            state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device)
-            action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device)
-            #Remember when we converted deques to lists? This is why, so that we could convert them to tensors
-            #IMPORTANT DEBUGGING: we use np.array to prevent a CPU bottleneck
-            return self.actor(state_seq, action_seq).cpu().data.numpy().flatten()
-            #.cpu() brings it to the physics engine. GPU is where the AI lives but the game lives on the CPU as that's where eqns are processed for it
-            #data.numpy() strips PyTorch baggage away and converts raw Nos into a NumPY array (also gymnasium doesn't know what a Tensor is)
-            #flatten() squashes away extra brackets so that the physics engine doesn't crash
+            # We use the actor's internal select_action to handle history-to-tensor conversion
+            return self.actor.select_action(state, state_history, action_history, return_attn=return_attn)
         else:
-            state = torch.FloatTensor(state.reshape(1, -1)).to(self.device) #NOTE: We could also just write .unsqueeze(0) and get literally the exact same thing, but hey
-            #1 means add 1 row, -1 means "adjust with me" RE columns cos the No. of actions could change
-            return self.actor(state).cpu().data.numpy().flatten() #.actor() shoves state data into the internal forward function
+            state = torch.FloatTensor(state.reshape(1, -1)).to(self.device) 
+            return self.actor(state).cpu().data.numpy().flatten()
 
     def train(self, replay_buffer, batch_size=256):
         """Perform a single step of the TD3 training loop."""
@@ -156,15 +149,24 @@ class TD3:
             #Note, the _ at the end of copy is what's telling the for loop to overwrite the contents with what we're passing automatically. It's updating it in place
             
     def save(self, filename):
-        """Save the model weights."""
+        """Save the model weights and training state."""
         torch.save(self.critic.state_dict(), filename + "_critic")
         torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
         torch.save(self.actor.state_dict(), filename + "_actor")
         torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+        torch.save(self.scaler.state_dict(), filename + "_scaler")
+        # Save iteration count
+        np.save(filename + "_total_it.npy", np.array([self.total_it]))
 
     def load(self, filename):
-        """Load the model weights."""
+        """Load the model weights and training state."""
         self.critic.load_state_dict(torch.load(filename + "_critic"))
         self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
         self.actor.load_state_dict(torch.load(filename + "_actor"))
         self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+        
+        if os.path.exists(filename + "_scaler"): #We save GradScaler to save the scale factor to prevent math spikes
+            self.scaler.load_state_dict(torch.load(filename + "_scaler"))
+        
+        if os.path.exists(filename + "_total_it.npy"): #Saving which interation we're on so that we know when to update Actor
+            self.total_it = int(np.load(filename + "_total_it.npy")[0])

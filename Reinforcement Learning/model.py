@@ -13,6 +13,8 @@ class RunningMeanStd:
                              #catastrophic precision loss
 
     def update(self, x):
+        if len(x.shape) == 1:
+            x = x.reshape(1, -1)
         batch_mean = np.mean(x, axis=0)
         batch_var = np.var(x, axis=0) #axis = 0 means calculate on each independent COLUMN rather than row IE it calculates mean and var over each feature/column
         batch_count = x.shape[0] #1st dimension gives batchsize 
@@ -47,6 +49,17 @@ class Normalizer:
         x = (x - self.rms.mean) / (np.sqrt(self.rms.var) + 1e-8) #Z-Score Standardization. Numerator centers data around 0 and denominator ensures that X & Y axis are on the same scale
         x = np.clip(x, -self.clip_limit, self.clip_limit) #Ensuring things don't go too out of hand despite normalization; This is a safety precaution
         return x
+
+    def save(self, filename):
+        """Save the normalizer stats to a file."""
+        np.savez(filename + "_normalizer.npz", mean=self.rms.mean, var=self.rms.var, count=self.rms.count)
+
+    def load(self, filename):
+        """Load the normalizer stats from a file."""
+        data = np.load(filename + "_normalizer.npz")
+        self.rms.mean = data["mean"]
+        self.rms.var = data["var"]
+        self.rms.count = data["count"]
 
 class Actor(nn.Module):
     """The Actor policy mapping states to actions."""
@@ -131,7 +144,24 @@ class TransformerActor(nn.Module):
         self.ln_f = nn.LayerNorm(d_model) #Final LayerNorm before the action head to keep things stable
         self.head = nn.Linear(d_model, action_dim) #O/P layer
 
-    def forward(self, state_seq, action_seq): #Remember, state_seq handles the 'where I am' and action_seq handles the 'what I did'
+    @property #Allows us to define a funcn in a class, but access it as though it was a simple var.
+    #my_model.device instead of my_model.device(self). Acts like a "read-only" property
+    def device(self):
+        """Infers device from model parameters."""
+        return next(self.parameters()).device #next() grabs the very first weight matrix
+
+    def select_action(self, state_norm, state_history, action_history, return_attn=False):
+        """Allows for single-step inference while maintaining temporal context."""
+        state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device)
+        action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device)
+        
+        if return_attn:
+            action, attn = self.forward(state_seq, action_seq, return_attn=True)
+            return action.cpu().data.numpy().flatten(), attn.cpu().data.numpy()
+        
+        return self.forward(state_seq, action_seq).cpu().data.numpy().flatten()
+
+    def forward(self, state_seq, action_seq, return_attn=False): #Remember, state_seq handles the 'where I am' and action_seq handles the 'what I did'
         # state_seq: (Batch size, Sequence length, state_dim)
         # action_seq: (B, L, action_dim)
         #Same goes for x fyi (x[2] is d_model = 128)
@@ -149,14 +179,25 @@ class TransformerActor(nn.Module):
         #view(1, 1, seq_len, seq_len) reshapes it to (1, 1, seq_len, seq_len) to match the dimensions of the attention scores
         #this is done for BROADCASTING
 
+        all_attns = []
         for block in self.blocks:
-            x = block(x, mask=mask)
+            if return_attn:
+                x, attn = block(x, mask=mask, return_attn=True)
+                all_attns.append(attn)
+            else:
+                x = block(x, mask=mask)
             
         x = self.ln_f(x)
         
         # We only care about the very last decision in the sequence - predicting the NEXT action
         last_token = x[:, -1, :]
-        return self.max_action * torch.tanh(self.head(last_token))
+        action = self.max_action * torch.tanh(self.head(last_token))
+        
+        if return_attn:
+            # Return action and average attention across blocks or just the last block
+            return action, torch.stack(all_attns).mean(dim=0) # Shape: (B, H, L, L)
+            
+        return action
 
 
 class TransformerBlock_RL(nn.Module):
@@ -173,10 +214,13 @@ class TransformerBlock_RL(nn.Module):
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, return_attn=False):
         # Using Pre-LayerNorm architecture as it is generally more stable for RL agents
-        x = x + self.attn(self.ln1(x), mask=mask)
+        attn_out, attn_weights = self.attn(self.ln1(x), mask=mask)
+        x = x + attn_out
         x = x + self.ffn(self.ln2(x))
+        if return_attn:
+            return x, attn_weights
         return x
 
 
@@ -209,4 +253,4 @@ class StandardAttention_RL(nn.Module):
         attn_weights = F.softmax(scores, dim=-1) #dim=-1 tells Softmax to go to the last dimension (Keys)
         output = torch.matmul(self.dropout(attn_weights), v)
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
-        return self.out_proj(output)
+        return self.out_proj(output), attn_weights

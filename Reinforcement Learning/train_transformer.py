@@ -50,9 +50,9 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
     print(f"---------------------------------------")
     return avg_reward
 
-def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=250000, start_timesteps=25e3, batch_size=256):
+def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=1000000, start_timesteps=25e3, batch_size=256):
     """Trains the Transformer-TD3 agent for a specific history length."""
-    print(f"Training Transformer L={seq_len} Seed={seed}")
+    print(f"\n--- Training Transformer L={seq_len} Seed={seed} ---")
     
     env = gym.make(env_name) #Training env
     torch.manual_seed(seed) #Ensures randomness is controlled and makes debugging possible
@@ -63,41 +63,63 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=25000
     max_action = float(env.action_space.high[0])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Initialize components with use_transformer=True
+    # Initialize components
     policy = TD3(state_dim, action_dim, max_action, device, use_transformer=True, seq_len=seq_len)
     replay_buffer = ReplayBuffer(state_dim, action_dim, device=device)
     normalizer = Normalizer(shape=(state_dim,))
 
     if not os.path.exists("./results_transformer"):
         os.makedirs("./results_transformer")
+    if not os.path.exists("./models"):
+        os.makedirs("./models")
+
+    file_name = f"TD3_Transformer_L{seq_len}_S{seed}"
+    model_path = f"./models/{file_name}"
+    results_path = f"./results_transformer/{file_name}.npy"
+
+    evaluations = []
+    start_t = 0
+
+    # RESUME LOGIC
+    if os.path.exists(results_path) and os.path.exists(model_path + "_actor"):
+        print(f"Found existing checkpoint for L={seq_len}. Loading states...")
+        evaluations = list(np.load(results_path))
+        start_t = len(evaluations) * 5000 # Since we evaluate every 5k steps
+        
+        policy.load(model_path)
+        normalizer.load(model_path)
+        
+        if os.path.exists(model_path + "_buffer.npz"):
+            print("Loading Replay Buffer...")
+            replay_buffer.load(model_path)
+        
+        start_timesteps = 0 # No need for random exploration if we have a trained model
+        print(f"Resuming from timestep {start_t} (Target: {max_timesteps})")
+    else:
+        print("Starting fresh training...")
 
     state, _ = env.reset(seed=seed)
     episode_reward = 0
     episode_timesteps = 0
-    evaluations = []
     
     # Track interaction history
     state_history = deque([np.zeros(state_dim) for _ in range(seq_len)], maxlen=seq_len)
     action_history = deque([np.zeros(action_dim) for _ in range(seq_len)], maxlen=seq_len)
 
-    for t in range(int(max_timesteps)):
+    for t in range(int(start_t), int(max_timesteps)):
         episode_timesteps += 1
 
         if t < start_timesteps:
             action = env.action_space.sample()
-        #HOLDUP! Why do we just turn off the AI's brain for the first timesteps?
-        #An untrained NN might just get stuck holding forward and never learn how to jump. By forcing random choices, we populate
-        #replay_buffer with rich diverse data for it to learn from.
         else:
-            state_norm = normalizer(state, update=True) #Finally, normalizer updates the math for every single frame
+            state_norm = normalizer(state, update=True)
             state_history.append(state_norm)
             
             action = (
-                policy.select_action(state_norm, list(state_history), list(action_history))
+                policy.select_action(state_norm, state_history, action_history)
                 + np.random.normal(0, max_action * 0.1, size=action_dim)
             ).clip(-max_action, max_action)
-            #We need to explore, we intentionally inject Gaussian noise to discover potentially better moves
-            #Dim of np.random.normal(loc(center of bell curve),standard deviation(how fat/skinny bell should be),how many "Noise darts" to throw?)
+            
         next_state, reward, terminated, truncated, _ = env.step(action)
         action_history.append(action)
         
@@ -110,18 +132,23 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=25000
         if t >= start_timesteps:
             policy.train(replay_buffer, batch_size)
 
-        if terminated or truncated: #We now reset everything for the next game
+        if terminated or truncated:
             state, _ = env.reset()
             episode_reward = 0
             episode_timesteps = 0
             state_history = deque([np.zeros(state_dim) for _ in range(seq_len)], maxlen=seq_len)
             action_history = deque([np.zeros(action_dim) for _ in range(seq_len)], maxlen=seq_len)
 
-        if (t + 1) % 5000 == 0: #Every 5000 steps we evaluate how smart the model is jsut to make sure
+        if (t + 1) % 5000 == 0: 
             eval_reward = eval_policy(policy, env_name, seed, normalizer, seq_len)
-            evaluations.append(eval_reward) #Important for drawing the LEARNING CURVE 
-            np.save(f"./results_transformer/TD3_L{seq_len}_S{seed}", evaluations) #Save to hard drive incase of crash
-            policy.save(f"./models/TD3_Transformer_L{seq_len}_S{seed}") #Save the model weights so we don't lose progress!
+            evaluations.append(eval_reward)
+            np.save(results_path[:-4], evaluations) 
+            policy.save(model_path)
+            normalizer.save(model_path)
+            # Replay buffer is large, save less frequently or only on successful exit?
+            if (t + 1) % 50000 == 0:
+                print("Saving persistent Replay Buffer (Large File)...")
+                replay_buffer.save(model_path)
 
     return evaluations
 
