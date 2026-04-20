@@ -64,4 +64,10 @@ The success of this project was not a straight line, but a series of "Scientific
 - **Pivot 3 (Verification)**: We proved the Transformer isn't just "fancier MLP"—we showed its **Latent Intelligence** by forcing it to re-map its own brain during the Robustness Sprint.
 
 ---
+## 7. Supporting Documentation
+For a deep dive into the underlying physics and algorithms, please refer to:
+- **[Mathematical Framework](file:///c:/Users/gauth/.gemini/antigravity/scratch/SAiDL-Summer-Assignment-2026/Reinforcement%20Learning/documentation/mathematical_framework.md)**: A complete list of all formulas, losses, and diagnostic algorithms used in this project.
+- **[Attention Diagnostics Protocol](file:///c:/Users/gauth/.gemini/antigravity/scratch/SAiDL-Summer-Assignment-2026/Reinforcement%20Learning/attention_diagnostics.py)**: The implementation of our "Causal Attention Scanner."
+
+---
 *(Final Conclusion: The project successfully moved from a standard reactive MLP to an attention-based Transformer architecture, and finally to a self-calibrating RLHF system capable of robust, human-aligned motor control. Every challenge—from sensor-crushing to poisoned students—was identified through rigorous diagnostic plotting and solved through targeted architectural hardening.)*
