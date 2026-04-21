@@ -1,0 +1,8 @@
+torch
+datasets
+tiktoken
+gymnasium
+numpy
+matplotlib
+tqdm
+scipy
