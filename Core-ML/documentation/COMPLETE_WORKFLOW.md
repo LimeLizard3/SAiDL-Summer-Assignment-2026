@@ -1,74 +1,65 @@
-# 🚀 The Complete Engineering Journey: From Baseline to AFT Bonus
+# 🛠️ Core-ML: Execution Workflow and File Requirements
 
-This document outlines the step-by-step workflow for the **SAiDL Summer Induction Assignment**. It serves as a guide for anyone starting from scratch to reproduce the entire project.
-
----
-
-## 🛠️ Phase 0: Environment Setup
-Before starting any tasks, ensure all dependencies are installed.
-```bash
-pip install -r requirements.txt
-```
-This installs core components: **PyTorch**, **Datasets** (HuggingFace), **Tiktoken** (OpenAI BPE), and **Gymnasium** (for the RL track).
+This document details the exact Python files required for each phase of the **Core-ML** project and the order in which they should be executed to reproduce the results.
 
 ---
 
-## 📈 Track 1: Core Machine Learning (The Transformer Skyscraper)
-
-### Task 1: Building the Foundation (The Baseline)
-*   **Goal**: Create a standard Transformer and train it on **WikiText-2**.
-*   **Execution**:
-    1.  Set `attention_type = "standard"` in `config.py`.
-    2.  Run `python Core-ML/train.py`.
-*   **Outcome**: A functional language model baseline with $\sim 35,000$ Perplexity.
-
-### Task 2: Attention Evolution (MQA & Linear)
-*   **Goal**: Optimize the attention mechanism for speed and memory.
-*   **Execution**:
-    1.  Switch `attention_type` to `mqa`, `linear`, or `sliding_window` in `config.py`.
-    2.  Run `python Core-ML/evaluate_all.py` to benchmark speed.
-*   **Outcome**: Verified 2.2x speedup using **Multi-Query Attention (MQA)**.
-
-### Task 3: Breaking the Context Barrier (Extrapolation)
-*   **Goal**: Enable the model to handle tokens beyond its training limit.
-*   **Execution**:
-    1.  Set `pos_encoding` to `rope` or `alibi` in `config.py`.
-    2.  Run `python Core-ML/extrapolation_test.py`.
-*   **Outcome**: Stable inference up to 2048 tokens (doubling the training window).
-
-### Task 4: The Hybrid Core (Causal Convolutions)
-*   **Goal**: Combine global attention with local convolutional filters.
-*   **Execution**:
-    1.  Choose a hybrid config in `config.py`.
-    2.  Run `python Core-ML/evaluate_all.py`.
-*   **Outcome**: **The Accuracy Winner** (at the time) with 27,515 PPL.
+## 🏛️ Central Architecture (Core dependencies)
+These files are the engine of all tasks. Most scripts depend on them:
+*   `model.py`: The main Transformer neural network.
+*   `attention_variants.py`: Housing for MQA, Linear, and AFT attention logic.
+*   `positional_logic.py`: Logic for RoPE and ALiBi embeddings.
+*   `conv_logic.py`: Causal 1D Convolutional layers.
+*   `config.py`: The global dashboard to toggle features.
+*   `data.py`: Automated tokenizer and WikiText-2 loader.
 
 ---
 
-## 🎁 The Bonus Task: Attention-Free Transformer (AFT)
+## 📈 Task-by-Task Workflow
 
-*   **Goal**: Remove the dot-product attention entirely.
-*   **Execution**: 
-    1.  Run `python Core-ML/benchmark_aft.py`.
-*   **Logic**: AFT uses element-wise operations to achieve $O(T)$ memory complexity.
-*   **Outcome**: **AFT-Local** became the new Quality Champion (PPL 17,177), and **AFT-Simple** became the new Speed Demon (30k tokens/sec).
+### Task 1: Building the Baseline
+*   **Objective**: Train a standard Transformer on WikiText-2.
+*   **Required Files**: `config.py`, `data.py`, `model.py`, `train.py`.
+*   **Execution Order**:
+    1.  **Configure**: Ensure `config.py` has `attention_type = "standard"`.
+    2.  **Execute**: Run `python Core-ML/train.py`.
+
+### Task 2: Advanced Attention Benchmarking
+*   **Objective**: Compare speed/VRAM of MQA, Linear, and Sliding Window attention.
+*   **Required Files**: `config.py`, `data.py`, `model.py`, `attention_variants.py`, `evaluate_all.py`.
+*   **Execution Order**:
+    1.  **Configure**: Edit `config.py` to select the variant (e.g., `attention_type = "mqa"`).
+    2.  **Execute**: Run `python Core-ML/evaluate_all.py`.
+
+### Task 3: Context Extrapolation (RoPE/ALiBi)
+*   **Objective**: Verify model stability at 2048+ tokens.
+*   **Required Files**: `config.py`, `model.py`, `positional_logic.py`, `extrapolation_test.py`.
+*   **Execution Order**:
+    1.  **Configure**: Edit `config.py` to set `pos_type = "alibi"` or `"rope"`.
+    2.  **Execute**: Run `python Core-ML/extrapolation_test.py`.
+
+### Task 4: Convolutional Hybrids
+*   **Objective**: Filter local features using convolutions before or between attention.
+*   **Required Files**: `config.py`, `model.py`, `conv_logic.py`, `evaluate_all.py`.
+*   **Execution Order**:
+    1.  **Configure**: Set `use_conv = True` and `conv_type` in `config.py`.
+    2.  **Execute**: Run `python Core-ML/evaluate_all.py`.
 
 ---
 
-## 🤖 Track 2: Reinforcement Learning (Optional Track)
-
-> [!NOTE]
-> The **Reinforcement Learning/** folder contains a separate track where we applied Transformers as agents. **RLHF** (Reinforcement Learning from Human Feedback) scripts are also located there for future research, though not used in the core Task 1-4 benchmarks.
-
-*   **Execution**: Run `python "Reinforcement Learning/train_transformer.py"`.
-*   **Logic**: Uses a Transformer-Actor with **TD3** to solve the `Hopper-v5` environment with history-based memory.
+## 🎁 BONUS TASK: Attention-Free Transformer (AFT)
+*   **Objective**: Complete elimination of the attention matrix.
+*   **Required Files**: `model.py`, `attention_variants.py`, `benchmark_aft.py`.
+*   **Execution Order**:
+    1.  **Execute**: Run `python Core-ML/benchmark_aft.py`.
 
 ---
 
-## ✅ Final Verification Checklist
-To confirm the repo is fully functional from scratch:
-1.  [ ] `python Core-ML/causality_test.py` (Must pass "Causal Integrity Passed")
-2.  [ ] `python Core-ML/evaluate_all.py` (Must generate a benchmark table)
-3.  [ ] `python Core-ML/extrapolation_test.py` (Check for ALiBi stability)
+## ✅ Global Verification
+*   **Objective**: Confirm causal integrity (no info leaks from the future).
+*   **Required Files**: `model.py`, `causality_test.py`.
+*   **Execution Order**:
+    1.  **Execute**: Run `python Core-ML/causality_test.py`.
 
-**Project Status: COMPLETE.** 🟢
+---
+**Focus: Core-ML Track Finalized.** 🟢
