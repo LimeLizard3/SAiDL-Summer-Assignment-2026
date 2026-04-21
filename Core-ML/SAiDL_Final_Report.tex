@@ -66,6 +66,18 @@ To enhance the model's ability to capture short-range syntactic structures (n-gr
     \item \textbf{Design B (Interleaved)}: Replaces alternating attention layers with Depthwise Separable Causal 1D Convolutions, drastically reducing parameter count and memory usage.
 \end{itemize}
 
+\section{Workflow and Implementation Requirements}
+
+To ensure reproducibility across all project phases, we established a systematic execution workflow and identified the specific Python file requirements for each task. The central infrastructure consists of \texttt{model.py} (architecture), \texttt{config.py} (parameters), and \texttt{data.py} (WikiText-2 ingestion).
+
+\begin{itemize}
+    \item \textbf{Task 1 (Baseline)}: Requires \texttt{train.py}. \textit{Workflow}: Configure standard attention in \texttt{config.py} and execute \texttt{train.py}.
+    \item \textbf{Task 2 (Efficiency)}: Requires \texttt{attention\_variants.py} and \texttt{evaluate\_all.py}. \textit{Workflow}: Toggle attention types in \texttt{config.py} and execute \texttt{evaluate\_all.py}.
+    \item \textbf{Task 3 (Stability)}: Requires \texttt{positional\_logic.py} and \texttt{extrapolation\_test.py}. \textit{Workflow}: Set \texttt{pos\_type} to RoPE or ALiBi and execute \texttt{extrapolation\_test.py}.
+    \item \textbf{Task 4 (Hybrids)}: Requires \texttt{conv\_logic.py} and \texttt{evaluate\_all.py}. \textit{Workflow}: Enable \texttt{use\_conv} in \texttt{config.py} and execute \texttt{evaluate\_all.py}.
+    \item \textbf{Bonus Task (AFT)}: Requires \texttt{benchmark\_aft.py} and \texttt{attention\_variants.py}. \textit{Workflow}: Execute \texttt{benchmark\_aft.py}.
+\end{itemize}
+
 \section{Results and Comparison}
 
 We conducted a global diagnostic across all 12 viable modular combinations, measuring Perplexity (PPL) on the validation set, Inference Speed (Tokens/Second), and Peak VRAM consumption (MB).
