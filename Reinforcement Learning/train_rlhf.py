@@ -10,7 +10,7 @@ from reward_model import RewardModel
 from rlhf_trainer import RLHFTrainer
 import matplotlib.pyplot as plt
 
-def train_rlhf(seed=0, env_name="Hopper-v5", max_timesteps=500000, seq_len=16):
+def train_rlhf(seed=0, env_name="Hopper-v5", max_timesteps=500000, seq_len=32):
     """
     Trains a Transformer agent using RLHF (Preference-based learned rewards).
     """
@@ -27,13 +27,22 @@ def train_rlhf(seed=0, env_name="Hopper-v5", max_timesteps=500000, seq_len=16):
     # 1. Initialize Components
     policy = TD3(state_dim, action_dim, max_action, device, use_transformer=True, seq_len=seq_len)
     
+    # Champion Model Integration
+    # We load the L=32 Champion weights as the seed for RLHF training.
+    # This turns RLHF from a 'tabula rasa' task into a 'fine-tuning' task.
+    champion_path = "./models/TD3_Transformer_L32_S0_stable_best"
+    if os.path.exists(champion_path + "_actor"):
+        print("Initializing RLHF Agent with L=32 Champion weights...")
+        policy.actor.load_state_dict(torch.load(champion_path + "_actor", map_location=device))
+        policy.actor_target.load_state_dict(policy.actor.state_dict())
+        policy.critic.load_state_dict(torch.load(champion_path + "_critic", map_location=device))
+        policy.critic_target.load_state_dict(policy.critic.state_dict())
+    
     # REPAIR LINE: We force-load the Expert L=32 normalizer immediately.
-    # This prevents 'Poisoned Student' syndrome by ensuring the Teacher and Student
-    # speak the same 'Language' (Sensory Scale) from Step 1.
     normalizer = Normalizer(shape=(state_dim,))
-    if os.path.exists("./models/TD3_Transformer_L32_S0_normalizer.npz"):
+    if os.path.exists(champion_path + "_normalizer.npz"):
         print("Synchronizing Normalizer scales with L=32 Expert...")
-        normalizer.load("./models/TD3_Transformer_L32_S0")
+        normalizer.load(champion_path)
     
     # Use the new high-quality Teacher Buffer for pre-training the Judge
     old_buffer_path = "./models/teacher_buffer"
@@ -103,7 +112,7 @@ def train_rlhf(seed=0, env_name="Hopper-v5", max_timesteps=500000, seq_len=16):
         
         # Training steps
         if t > 5000:
-            policy.train(new_buffer, batch_size=256)
+            policy.train(new_buffer, batch_size=512)
             
             # REPAIR LINE: THE ETERNAL TEXTBOOK PROTOCOL
             # Every 2000 steps, we force the Judge to re-study the Expert Textbook (old_buffer)
@@ -147,8 +156,8 @@ def train_rlhf(seed=0, env_name="Hopper-v5", max_timesteps=500000, seq_len=16):
 
 def plot_rlhf_results(rlhf_path, seed):
     """Generates the RLHF vs MLP comparison plot."""
-    mlp_path = "./results/TD3_Hopper-v5_0.npy"
-    save_path = f"./analysis/rlhf_performance_S{seed}.png"
+    mlp_path = "./results/TD3_Hopper-v5_0_stable.npy"
+    save_path = f"./analysis/rlhf_performance_S{seed}_stable.png"
     
     if not os.path.exists("./analysis"):
         os.makedirs("./analysis")

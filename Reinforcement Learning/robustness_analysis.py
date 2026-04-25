@@ -103,9 +103,9 @@ def run_analysis():
     max_action = float(env.action_space.high[0])
     
     configs = [
-        {"name": "MLP (Baseline)", "model_path": "./models/TD3_Hopper-v5_0", "transformer": False, "seq_len": 1},
-        {"name": "Transformer (L=16)", "model_path": "./models/TD3_Transformer_L16_S0", "transformer": True, "seq_len": 16},
-        {"name": "Transformer (L=32)", "model_path": "./models/TD3_Transformer_L32_S0", "transformer": True, "seq_len": 32},
+        {"name": "MLP (Stabilized)", "model_path": "./models/TD3_Hopper-v5_0_stable", "transformer": False, "seq_len": 1},
+        {"name": "Transformer (L=8 Stable)", "model_path": "./models/TD3_Transformer_L8_S0_stable_best", "transformer": True, "seq_len": 8},
+        {"name": "Transformer (L=32 Champion)", "model_path": "./models/TD3_Transformer_L32_S0_stable_best", "transformer": True, "seq_len": 32},
     ]
     
     results = {cfg["name"]: [] for cfg in configs}

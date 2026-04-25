@@ -1,5 +1,6 @@
 import copy
 import torch
+from torch.optim.lr_scheduler import ExponentialLR
 import numpy as np
 import torch.nn.functional as F
 import os
@@ -13,9 +14,10 @@ class TD3:
         action_dim,
         max_action,
         device,
-        lr=3e-4,
+        actor_lr=1e-4, #If the actor is faster than the critic, it wont learn properly, so we slow it down 
+        critic_lr=3e-4,#by giving them two different lrs
         gamma=0.99,
-        tau=0.005,
+        tau=0.0005,
         policy_noise=0.2,
         noise_clip=0.5,
         policy_freq=2,
@@ -32,11 +34,14 @@ class TD3:
             self.actor = Actor(state_dim, action_dim, max_action).to(device) #Remember, we're copying the NN here from the blueprint (the class from model.py)
             
         self.actor_target = copy.deepcopy(self.actor)
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
 
         self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
+        # 5. Stricter Discipline: Schedulers for long-term decay
+        self.actor_scheduler = ExponentialLR(self.actor_optimizer, gamma=0.999998) # Very slow decay
+        self.critic_scheduler = ExponentialLR(self.critic_optimizer, gamma=0.999998)
         #We use a concept called BOOTSTRAPPING here during copy.deepcopy() by which the model makes its own "Y-labels" and predicts from there; if we didn't have that, the base would
         #keep changing and the model wouldn't learn at all due to an unstable base.
 
@@ -110,6 +115,10 @@ class TD3:
         # [AMP] Scales the loss up by a massive factor safely so it doesn't break the float limits during backprop.
         self.scaler.scale(critic_loss).backward() #Backprop, scaled for AMP
         
+        # [STABILITY] Unscale gradients before clipping to prevent spikes
+        self.scaler.unscale_(self.critic_optimizer)
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)
+        
         # [AMP] Shrinks the math back down to normal and applies the Gradient Descent updates to the Critics.
         self.scaler.step(self.critic_optimizer) #This is Gradient Descent
         
@@ -130,6 +139,10 @@ class TD3:
             
             # [AMP] Expands the Actor loss to stop it from underflowing (hitting zero).
             self.scaler.scale(actor_loss).backward()
+            
+            # [STABILITY] Unscale gradients before clipping to prevent spikes
+            self.scaler.unscale_(self.actor_optimizer)
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
             
             # [AMP] Un-scales the matrix and tweaks the Actor's neural weights safely.
             self.scaler.step(self.actor_optimizer) #This is Gradient Descent (It auto takes the blueprint given by backprop)

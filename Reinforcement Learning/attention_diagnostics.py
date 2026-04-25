@@ -97,8 +97,11 @@ def plot_diagnostics(clean_data, partial_data, seq_len):
     clean_ep = clean_data[1][0]
     partial_ep = partial_data[1][0]
     
-    ax2.plot(clean_ep[:250], color=clean_color, alpha=0.5, label='Clean Entropy')
-    ax2.plot(partial_ep[:250], color=robust_color, alpha=0.8, label='Robust Entropy (Precision Focus)')
+    # Find common length to ensure fair visual comparison
+    common_len = min(len(clean_ep), len(partial_ep), 250)
+    
+    ax2.plot(clean_ep[:common_len], color=clean_color, alpha=0.5, label='Clean Entropy')
+    ax2.plot(partial_ep[:common_len], color=robust_color, alpha=0.8, label='Robust Entropy (Precision Focus)')
     
     ax2.set_title("Decision Sharpness: Attention Entropy Over Time", fontsize=14, pad=15)
     ax2.set_xlabel("Steps in Episode", fontsize=11)
@@ -114,9 +117,9 @@ def plot_diagnostics(clean_data, partial_data, seq_len):
 
 if __name__ == "__main__":
     # Use L=32 Champion for Clean
-    model_path = "./models/TD3_Transformer_L32_S0"
+    model_path = "./models/TD3_Transformer_L32_S0_stable_best"
     # Use L=32 Robust Specialist for Partial
-    robust_path = "./models/TD3_Transformer_Robust"
+    robust_path = "./models/TD3_Transformer_Robust_stable_best"
     
     seq_len = 32
     if os.path.exists(model_path + "_actor") and os.path.exists(robust_path + "_actor"):

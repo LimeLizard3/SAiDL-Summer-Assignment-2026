@@ -30,7 +30,7 @@ def eval_policy(policy, env_name, seed, normalizer, eval_episodes=10):
     print(f"---------------------------------------")
     return avg_reward
 
-def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25e3, batch_size=256):
+def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25e3, batch_size=512):
     """Trains the TD3 agent for a specific seed."""
     print(f"Training Seed: {seed}")
     
@@ -61,6 +61,12 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
     episode_timesteps = 0
     episode_num = 0
     evaluations = []
+    max_eval_reward = -float('inf')
+    
+    # [STABILITY] Use a safe filename to avoid overwriting your original baseline
+    base_file_name = f"TD3_{env_name}_{seed}_stable"
+    model_path = f"./models/{base_file_name}"
+    best_model_path = f"./models/{base_file_name}_best"
 
     for t in range(int(max_timesteps)):
         episode_timesteps += 1
@@ -70,10 +76,13 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
             action = env.action_space.sample() #We're doing this to just get a varying amount of data from doing random actions till a certain frame
         else:
             state_norm = normalizer(state, update=True) #We WANT the Normalizer to learn and train now 
+            
+            # [STABILITY] Noise Decay: Smoothly reduce randomness as the agent masters the task
+            noise_scale = max(0.02, 0.1 * (1 - t / (max_timesteps * 0.5)))
+            
             action = (
                 policy.select_action(np.array(state_norm))
-                + np.random.normal(0, max_action * 0.1, size=action_dim) #This line just adds some noise so that the AI could maybe discover a better way
-                                                                         #We're looking at a bell curve here, and that 0 represents the center of that curve
+                + np.random.normal(0, max_action * noise_scale, size=action_dim) #This line just adds some noise so that the AI could maybe discover a better way
             ).clip(-max_action, max_action)
 
         # Perform action
@@ -89,6 +98,9 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
         # Train agent
         if t >= start_timesteps:
             policy.train(replay_buffer, batch_size)
+            # [STABILITY] Decay learning rates as the agent matures to prevent last minute panic
+            policy.actor_scheduler.step()
+            policy.critic_scheduler.step()
 
         if terminated or truncated:
             print(f"Total T: {t+1} Episode Num: {episode_num+1} Reward: {episode_reward:.3f}")
@@ -101,8 +113,15 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
         if (t + 1) % 5000 == 0:
             eval_reward = eval_policy(policy, env_name, seed, normalizer)
             evaluations.append(eval_reward)
-            np.save(f"./results/TD3_{env_name}_{seed}", evaluations)
-            policy.save(f"./models/TD3_{env_name}_{seed}")
+            np.save(f"./results/{base_file_name}", evaluations)
+            policy.save(model_path)
+            
+            # [STABILITY] Champion Memory: Save our all-time best performer separately
+            if eval_reward > max_eval_reward:
+                max_eval_reward = eval_reward
+                print(f"New Champion! Reward: {max_eval_reward:.3f}. Saving best model...")
+                policy.save(best_model_path)
+                normalizer.save(best_model_path)
 
     return evaluations
 
@@ -123,5 +142,6 @@ if __name__ == "__main__":
     plt.xlabel("Evaluation Step (x5000)")
     plt.ylabel("Average Reward")
     plt.legend()
-    plt.savefig("td3_baseline_results.png")
-    plt.show()
+    plt.savefig("td3_baseline_results_stabilized.png")
+    # [HEADLESS] Disabled plt.show() to prevent blocking in automated queues
+    # plt.show()

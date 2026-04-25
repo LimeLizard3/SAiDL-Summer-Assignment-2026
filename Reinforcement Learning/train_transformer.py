@@ -50,7 +50,7 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
     print(f"---------------------------------------")
     return avg_reward
 
-def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=1000000, start_timesteps=25e3, batch_size=256):
+def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=1000000, start_timesteps=25e3, batch_size=512):
     """Trains the Transformer-TD3 agent for a specific history length."""
     print(f"\n--- Training Transformer L={seq_len} Seed={seed} ---")
     
@@ -73,11 +73,13 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
     if not os.path.exists("./models"):
         os.makedirs("./models")
 
-    file_name = f"TD3_Transformer_L{seq_len}_S{seed}"
+    file_name = f"TD3_Transformer_L{seq_len}_S{seed}_stable"
     model_path = f"./models/{file_name}"
+    best_model_path = f"./models/{file_name}_best"
     results_path = f"./results_transformer/{file_name}.npy"
 
     evaluations = []
+    max_eval_reward = -float('inf')
     start_t = 0
 
     # RESUME LOGIC
@@ -115,9 +117,12 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
             state_norm = normalizer(state, update=True)
             state_history.append(state_norm)
             
+            # [STABILITY] Noise Decay: Reduce noise as training progresses
+            noise_scale = max(0.02, 0.1 * (1 - t / (max_timesteps * 0.5)))
+            
             action = (
                 policy.select_action(state_norm, state_history, action_history)
-                + np.random.normal(0, max_action * 0.1, size=action_dim)
+                + np.random.normal(0, max_action * noise_scale, size=action_dim)
             ).clip(-max_action, max_action)
             
         next_state, reward, terminated, truncated, _ = env.step(action)
@@ -131,6 +136,9 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
 
         if t >= start_timesteps:
             policy.train(replay_buffer, batch_size)
+            # [STABILITY] Slow learning rate decay for the Transformer
+            policy.actor_scheduler.step()
+            policy.critic_scheduler.step()
 
         if terminated or truncated:
             state, _ = env.reset()
@@ -145,6 +153,13 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
             np.save(results_path[:-4], evaluations) 
             policy.save(model_path)
             normalizer.save(model_path)
+            
+            # [STABILITY] Champion Memory: Save our all-time best performer separately
+            if eval_reward > max_eval_reward:
+                max_eval_reward = eval_reward
+                print(f"New Champion! Reward: {max_eval_reward:.3f}. Saving best model...")
+                policy.save(best_model_path)
+                normalizer.save(best_model_path)
             # Replay buffer is large, save less frequently or only on successful exit?
             if (t + 1) % 50000 == 0:
                 print("Saving persistent Replay Buffer (Large File)...")
@@ -165,13 +180,14 @@ if __name__ == "__main__":
     for l, res in all_results.items():
         plt.plot(res, label=f"Transformer (L={l})")
     
-    # Load Baseline Seed 0 for comparison
-    baseline = np.load("./results/TD3_Hopper-v5_0.npy")
-    plt.plot(baseline, label="MLP Baseline", linestyle="--")
+    # Load Stabilized MLP Baseline for a fair scientific comparison
+    baseline = np.load("./results/TD3_Hopper-v5_0_stable.npy")
+    plt.plot(baseline, label="MLP Baseline (Stabilized)", linestyle="--", color='grey', alpha=0.8)
     
     plt.title("Transformer vs MLP Baseline on Hopper-v5")
     plt.xlabel("Evaluation Step (x5000)")
     plt.ylabel("Average Reward")
     plt.legend()
-    plt.savefig("./analysis/transformer_comparison_results.png")
-    plt.show()
+    plt.savefig("./analysis/transformer_comparison_stabilized.png")
+    # [HEADLESS] Disabled plt.show() to prevent blocking in automated queues
+    # plt.show()

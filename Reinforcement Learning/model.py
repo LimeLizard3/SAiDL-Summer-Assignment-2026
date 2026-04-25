@@ -77,7 +77,7 @@ class Actor(nn.Module):
         a = F.relu(self.l2(a))
         return self.max_action * torch.tanh(self.l3(a)) #mult can output any No. in the universe, so if we wrap it around tanh, we're basically squashing it into a fixed
                                                         #guaranteed percentage range. That way, the physics engine doesn't glitch out
-        #IMPORTANT: Why not LeakyReLU??? First, ReLU is computationally cheap. Second, sometimes a neuron needs to shut up (O=nothin here), and Third, this network is incredibly small with
+        #IMPORTANT: Why not LeakyReLU? First, ReLU is computationally cheap. Second, sometimes a neuron needs to shut up (O=nothin here), and Third, this network is incredibly small with
         #only two layers. There's really no need for it here. However, if the agent flatlines and refuses to learn, switching to LeakyReLU is one of the first debugging steps
 
 
@@ -152,14 +152,47 @@ class TransformerActor(nn.Module):
 
     def select_action(self, state_norm, state_history, action_history, return_attn=False):
         """Allows for single-step inference while maintaining temporal context."""
-        state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device)
-        action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device)
+        state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device).requires_grad_(True)
+        action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device).requires_grad_(True)
+        #With requires_grad_(True), we track every math operation done to the data, as we want to backprop later
         
         if return_attn:
             action, attn = self.forward(state_seq, action_seq, return_attn=True)
             return action.cpu().data.numpy().flatten(), attn.cpu().data.numpy()
         
         return self.forward(state_seq, action_seq).cpu().data.numpy().flatten()
+        #Moves results to CPU, detaches from GD tracking graph, converts to a standard 1D NumPy array
+
+    def get_attribution(self, state_history, action_history):
+        """Calculates Chefer et al. Attribution Map via relevancy propagation."""
+        state_seq = torch.FloatTensor(np.array(state_history)).unsqueeze(0).to(self.device).requires_grad_(True)
+        action_seq = torch.FloatTensor(np.array(action_history)).unsqueeze(0).to(self.device).requires_grad_(True)
+        
+        # 1. Forward Pass to capture maps
+        action = self.forward(state_seq, action_seq)
+        
+        # 2. Backward Pass from the predicted action norm
+        self.zero_grad()
+        action.pow(2).sum().backward() # We propagate relevancy from the L2 norm of the action
+        #A = A1^2 + A2^2 (A circle in 2D space)
+        
+        # 3. Propagate Relevancy across layers (Chefer Protocol)
+        num_layers = len(self.blocks)
+        seq_len = state_seq.size(1)
+        R = torch.eye(seq_len, device=self.device).unsqueeze(0).expand(1, seq_len, seq_len)
+        #eye basc generates an Identity Matrix of seq_len (the ones mean 100% relevant)
+        
+        for block in self.blocks:
+            attn = block.attn.attn_weights # (1, H, L, L)
+            grad = block.attn.attn_gradients # (1, H, L, L)
+            
+            # Use Absolute Saliency to capture both 'Push' and 'Pull' memories
+            cam = (grad * attn).abs().mean(dim=1) 
+            R = torch.bmm(cam, R)
+            
+        # Return normalized saliency for the last token
+        res = R.detach().cpu().numpy()[0, -1, :]
+        return res / (np.max(res) + 1e-8)
 
     def forward(self, state_seq, action_seq, return_attn=False): #Remember, state_seq handles the 'where I am' and action_seq handles the 'what I did'
         # state_seq: (Batch size, Sequence length, state_dim)
@@ -251,6 +284,14 @@ class StandardAttention_RL(nn.Module):
             #The mask is a lower triangular matrix (only 1s on and below the diagonal)
             
         attn_weights = F.softmax(scores, dim=-1) #dim=-1 tells Softmax to go to the last dimension (Keys)
+        
+        # Attribution Hook
+        if self.training or True: # We always want hooks enabled for diagnostics
+            self.attn_weights = attn_weights
+            def save_grad(grad):
+                self.attn_gradients = grad
+            attn_weights.register_hook(save_grad)
+
         output = torch.matmul(self.dropout(attn_weights), v)
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
         return self.out_proj(output), attn_weights
