@@ -30,6 +30,25 @@ Stabilizes the distribution of activations between layers.
 $$ y = \frac{x - \text{E}[x]}{\sqrt{\text{Var}[x] + \epsilon}} \cdot \gamma + \beta $$
 *   **Located in**: `model.py` -> `TransformerBlock_RL`.
 
+### D. Rotary Positional Embedding (RoPE)
+Encodes temporal order by rotating Query ($Q$) and Key ($K$) vectors in 2D space.
+
+#### 1. The 2D Rotation Matrix
+To rotate a point $(x, y)$ by an angle $\theta$, we apply the standard rotation matrix:
+$$ \begin{pmatrix} x_{new} \\ y_{new} \end{pmatrix} = \begin{pmatrix} \cos(\theta) & -\sin(\theta) \\ \sin(\theta) & \cos(\theta) \end{pmatrix} \begin{pmatrix} x \\ y \end{pmatrix} $$
+Expanding this gives two fundamental equations for neural feature rotation:
+*   $x_{new} = x \cos(\theta) - y \sin(\theta)$
+*   $y_{new} = y \cos(\theta) + x \sin(\theta)$
+
+#### 2. The Computational "rotate_half" Trick
+To avoid slow matrix multiplication, we implement the **rotate_half** optimization:
+If $q = (x, y)$, then $\text{rotate\_half}(q) = (-y, x)$.
+The final RoPE implementation is calculated via element-wise multiplication:
+$$ q_{\text{rope}} = (q \cdot \cos) + (\text{rotate\_half}(q) \cdot \sin) $$
+$$ q_{\text{rope}} = (x \cos, y \cos) + (-y \sin, x \sin) = (x \cos - y \sin, y \cos + x \sin) $$
+This perfectly recreates the rotation matrix using only basic GPU addition and multiplication.
+*   **Located in**: `model.py` -> `StandardAttention_RL.apply_rope`.
+
 ---
 
 ## 2. Twin-Delayed DDPG (The Optimizer)

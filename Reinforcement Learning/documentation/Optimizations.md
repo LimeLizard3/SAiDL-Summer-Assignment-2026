@@ -87,7 +87,27 @@ The success of this project was not a straight line, but a series of "Scientific
 
 ---
 
-## 8. Final Repository Status
+## 8. The Python-to-C++ Bottleneck (Deque vs. List)
+During Task 3, we identified a critical "Silent Bottleneck" in the training loop that was artificially slowing down our Transformer's inference speed.
+
+### The Discovery: The Intermediate Copy
+In our original code, we were converting our history `deque` into a Python `list` before passing it to the Actor:
+```python
+# OLD INEFFICIENT WAY
+action = policy.select_action(..., state_history=list(state_history))
+```
+While this worked, it forced Python to perform a **Deep Copy** of the entire 32-step history into the heap every single time the agent took a step. With millions of steps across the project, this created a significant CPU bottleneck.
+
+### The Loophole: Pointer-Style Hand-off
+We optimized this by passing the raw `deque` directly to the `model.py` interface. 
+*   **The Concept**: In Python, passing an object is a **Reference** (similar to a pointer). By passing the `deque` directly, we skip the slow list-copying phase entirely.
+*   **The Execution**: The actual conversion to a contiguous memory block is now handled exclusively by **NumPy's C++ Engine** inside `select_action`. 
+
+This micro-optimization ensures that the CPU spends less time managing Python lists and more time feeding the GPU Tensor Cores, resulting in a cleaner, faster training cycle.
+
+---
+
+## 9. Final Repository Status
 The project is now finalized for submission:
 *   **Champion Model**: Located at `./models/TD3_Transformer_L32_S0_stable_best`.
 *   **Final Study**: Automated and verifiable via `train_transformer.py`.
