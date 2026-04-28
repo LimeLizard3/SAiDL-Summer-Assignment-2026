@@ -34,8 +34,8 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
             # Select action based on history
             action = policy.select_action(
                 state_norm, 
-                state_history=list(state_history), 
-                action_history=list(action_history) #PyTorch doesn't know how to turn a deque into a tensor, so we convert to a list
+                state_history=state_history, 
+                action_history=action_history
             )
             #AI's action is absolute here
             state, reward, terminated, truncated, _ = eval_env.step(action)

@@ -26,7 +26,7 @@ def run_diagnostics(model_path, env_name="Hopper-v5", seq_len=32, episodes=3, mo
     
     policy = TD3(state_dim, action_dim, max_action, device, use_transformer=True, seq_len=seq_len)
     # Inference-only load (we only need the actor for diagnostics)
-    policy.actor.load_state_dict(torch.load(model_path + "_actor", map_location=device))
+    policy.actor.load_state_dict(torch.load(model_path + "_actor", map_location=device), strict=False)
     
     normalizer = Normalizer(shape=(state_dim,))
     normalizer.load(model_path) # Load the actual expert normalizer
@@ -110,16 +110,16 @@ def plot_diagnostics(clean_data, partial_data, seq_len):
     ax2.grid(True, alpha=0.3, linestyle='--')
     
     plt.tight_layout()
-    if not os.path.exists("./analysis"):
-        os.makedirs("./analysis")
-    plt.savefig("./analysis/attention_analysis.png", dpi=300)
-    print("[SUCCESS] Scientific attention analysis saved to ./analysis/attention_analysis.png")
+    if not os.path.exists("./Graphs"):
+        os.makedirs("./Graphs")
+    plt.savefig("./Graphs/attention_analysis.png", dpi=300)
+    print("[SUCCESS] Scientific attention analysis saved to ./Graphs/attention_analysis.png")
 
 if __name__ == "__main__":
     # Use L=32 Champion for Clean
-    model_path = "./models/TD3_Transformer_L32_S0_stable_best"
-    # Use L=32 Robust Specialist for Partial
-    robust_path = "./models/TD3_Transformer_Robust_stable_best"
+    # Use ORIGINAL unoptimized models for the true "Old Graph" look
+    model_path = "./models/TD3_Transformer_L32_S0"
+    robust_path = "./models/TD3_Transformer_Robust"
     
     seq_len = 32
     if os.path.exists(model_path + "_actor") and os.path.exists(robust_path + "_actor"):

@@ -124,19 +124,36 @@ class TransformerActor(nn.Module):
     A Causal Transformer Actor that uses history to decide actions.
     Adapted from the Core-ML Advanced Transformer.
     """
-    def __init__(self, state_dim, action_dim, max_action, d_model=128, n_heads=4, n_layers=2, dropout=0.1):
+    def __init__(self, state_dim, action_dim, max_action, d_model=128, n_heads=4, n_layers=2, dropout=0.1, pos_encoding_type='learned', max_len=32):
         super(TransformerActor, self).__init__()
         self.max_action = max_action
+        self.pos_encoding_type = pos_encoding_type
+        self.max_len = max_len
         
         # 1. Input Embedding: Maps raw sensors to Transformer space
         self.state_emb = nn.Linear(state_dim, d_model)
         self.action_emb = nn.Linear(action_dim, d_model)
         self.drop = nn.Dropout(dropout)
+
+        # 2. Positional Encodings
+        if self.pos_encoding_type == 'learned':
+            self.pos_emb = nn.Parameter(torch.zeros(1, max_len, d_model)) #1 is Batch size, max_len = 32 (Sequence length), d_model = 128 (Features for each word)
+        elif self.pos_encoding_type == 'sinusoidal':
+            pe = torch.zeros(max_len, d_model) #Doing wave math on 3D tensors gets confusing, so we unsqueeze the batch size in the final step
+            position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1) #Turns the flat list into a vertical column
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            #We only need d_model/2 frequencies as each one is used twice (Sin/Cos)
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            self.register_buffer('pe', pe.unsqueeze(0))
+        # Note: RoPE is applied inside the Attention layer as that isn't a label, it actually rotates the data
+
+        
         #Transformer requires all inputs to be exactly d_model, we're just projecting data into the right dimension
-        # 2. Transformer Blocks
-        self.blocks = nn.ModuleList([ #ModuleList uses Py list comprehension to create N_layers identical transformerblocks
+        # 3. Transformer Blocks
+        self.blocks = nn.ModuleList([ #ModuleList uses Py list comprehension to create N_layers identical transformer blocks
                                       #& stack them into a list. This is where all the attention math happens
-            TransformerBlock_RL(d_model, n_heads, dropout) for _ in range(n_layers) #Passing it into the basic Transformer
+            TransformerBlock_RL(d_model, n_heads, dropout, pos_encoding_type) for _ in range(n_layers)
         ])
         #Note, what's passed here aren't required parameters, they're construction tools
 
@@ -201,7 +218,15 @@ class TransformerActor(nn.Module):
         
         # Sum the state and action embeddings (standard for Decision Transformers)
         x = self.state_emb(state_seq) + self.action_emb(action_seq) #Projecting and combining
-        x = self.drop(x) #"Blinding"
+        
+        # Apply Positional Encoding (if not using RoPE)
+        if self.pos_encoding_type == 'learned':
+            x = x + self.pos_emb[:, :x.size(1), :]
+        elif self.pos_encoding_type == 'sinusoidal':
+            x = x + self.pe[:, :x.size(1), :]
+        #This whole thing above is BROADCASTING
+            
+        x = self.drop(x) #Blinding
         
         # Build a causal mask (don't look at the future!) - This is the core 'Time Travel Prevention'
         seq_len = x.size(1) 
@@ -235,9 +260,9 @@ class TransformerActor(nn.Module):
 
 class TransformerBlock_RL(nn.Module):
     """Simplified Transformer Block for RL - Adapted from Main Assignment."""
-    def __init__(self, d_model, n_heads, dropout):
+    def __init__(self, d_model, n_heads, dropout, pos_encoding_type='learned'):
         super().__init__()
-        self.attn = StandardAttention_RL(d_model, n_heads, dropout)
+        self.attn = StandardAttention_RL(d_model, n_heads, dropout, pos_encoding_type)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_model * 4), #Standard 4x expansion in the FeedForward network (Scratchpad)
             nn.GELU(), #Using GELU as it helps with the vanishing gradient problem better than RELU here
@@ -258,10 +283,11 @@ class TransformerBlock_RL(nn.Module):
 
 
 class StandardAttention_RL(nn.Module):
-    """Standard Causal Attention adapted for RL sequences."""
-    def __init__(self, d_model, n_heads, dropout=0.1):
+    """Standard Causal Attention adapted for RL sequences, supporting RoPE."""
+    def __init__(self, d_model, n_heads, dropout=0.1, pos_encoding_type='learned'):
         super().__init__()
         self.n_heads = n_heads
+        self.pos_encoding_type = pos_encoding_type
         self.d_k = d_model // n_heads #Ensuring dimensionality matches across heads
         
         self.q_proj = nn.Linear(d_model, d_model)
@@ -270,11 +296,50 @@ class StandardAttention_RL(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model) #After the n_heads think, this blends them all together
         self.dropout = nn.Dropout(dropout)
 
+    def apply_rope(self, q, k):
+        #Learned & Sinusoidal are additive, we simply add labels to the data
+        #RoPE is multiplicative, it changes the literal angle the vectors look at eachother with, this rotation
+        #needs to happen fresh every time a q and a k interact to ensure their relative distance is calculated properly
+        """Applies Rotary Positional Embedding to Q and K."""
+        bsz, n_heads, seq_len, d_k = q.size()
+        
+        # 1. Create frequency buffers (m * theta)
+        position = torch.arange(seq_len, device=q.device).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_k, 2, device=q.device).float() * (-math.log(10000.0) / d_k)) #Our different speeds
+        sinusoid = position * div_term #Gives the specific angle for every point in time at every feature
+        
+        sin = sinusoid.sin().view(1, 1, seq_len, d_k // 2)
+        cos = sinusoid.cos().view(1, 1, seq_len, d_k // 2)
+        
+        # 2. Split into pairs and rotate
+        def rotate_half(x):
+            x1, x2 = x[..., 0::2], x[..., 1::2]
+            return torch.stack([-x2, x1], dim=-1).flatten(-2)
+            #dim=-1 takes the first item from both lists and makes them a pair, and so on
+            #flatten=-2 simply erases the inner brackets, makes it one list
+            #We do this to get the mathematical conditions required to calculate the angle
+
+        # q_rotated = q * cos + rotate_half(q) * sin
+        # Note: We need to broadcast sin/cos to the right shapes
+        # Since sin/cos are (1, 1, seq_len, d_k // 2), we repeat them for the pair
+        sin_full = sin.repeat_interleave(2, dim=-1)
+        cos_full = cos.repeat_interleave(2, dim=-1)
+        #Takes every item(angle in this case) and duplicates it so that we have the correct length of array for math
+        
+        q_rope = (q * cos_full) + (rotate_half(q) * sin_full)
+        k_rope = (k * cos_full) + (rotate_half(k) * sin_full)
+        #The math formulae depicted in my math document
+        
+        return q_rope, k_rope
+
     def forward(self, x, mask=None):
         bsz, seq_len, _ = x.size()
         q = self.q_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         k = self.k_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         v = self.v_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        
+        if self.pos_encoding_type == 'rope':
+            q, k = self.apply_rope(q, k)
         
         # Attention score calculation with scaling factor to prevent large values
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
@@ -285,9 +350,9 @@ class StandardAttention_RL(nn.Module):
             
         attn_weights = F.softmax(scores, dim=-1) #dim=-1 tells Softmax to go to the last dimension (Keys)
         
-        # Attribution Hook
-        if self.training or True: # We always want hooks enabled for diagnostics
-            self.attn_weights = attn_weights
+        # Attribution Hook (Saves a copy of the gradients)
+        if attn_weights.requires_grad: 
+            self.attn_weights = attn_weights #Temporary storage to Permanent storage
             def save_grad(grad):
                 self.attn_gradients = grad
             attn_weights.register_hook(save_grad)

@@ -22,14 +22,16 @@ class TD3:
         noise_clip=0.5,
         policy_freq=2,
         use_transformer=False,
-        seq_len=32
+        seq_len=32,
+        pos_encoding_type='learned' #You can easily change this later
     ):
         self.use_transformer = use_transformer
         self.seq_len = seq_len
+        self.pos_encoding_type = pos_encoding_type
         
         if use_transformer:
             from model import TransformerActor
-            self.actor = TransformerActor(state_dim, action_dim, max_action).to(device)
+            self.actor = TransformerActor(state_dim, action_dim, max_action, pos_encoding_type=pos_encoding_type).to(device)
         else:
             self.actor = Actor(state_dim, action_dim, max_action).to(device) #Remember, we're copying the NN here from the blueprint (the class from model.py)
             
@@ -173,10 +175,17 @@ class TD3:
 
     def load(self, filename):
         """Load the model weights and training state."""
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+        self.critic.load_state_dict(torch.load(filename + "_critic"), strict=False)
+        try:
+            self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
+        except:
+            print(f"Warning: Critic optimizer for {filename} could not be loaded (likely architectural shift). Skipping.")
+            
+        self.actor.load_state_dict(torch.load(filename + "_actor"), strict=False)
+        try:
+            self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+        except:
+            print(f"Warning: Actor optimizer for {filename} could not be loaded (likely architectural shift). Skipping.")
         
         if os.path.exists(filename + "_scaler"): #We save GradScaler to save the scale factor to prevent math spikes
             self.scaler.load_state_dict(torch.load(filename + "_scaler"))

@@ -17,37 +17,37 @@ class RLHFTrainer:
         self.device = device
 
     def train_step(self, replay_buffer, batch_size=64, segment_len=50):
-        """Perform one step of preference learning."""
-        # 1. Sample pairs of segments
+        """Perform one step of preference learning for the entire Jury."""
         batch = replay_buffer.sample_segment_pairs(batch_size, segment_len)
         if batch is None:
             return 0.0
             
-        s1, a1, r1_true, s2, a2, r2_true = batch #In replay_buffer, it O/Ps values in this order
-
-        # 2. Generate labels (the 'Human' choice)
-        # Based on Christiano et al: 1 if r1 > r2, 0.5 if tied, 0 if r2 > r1
-        # We use a epsilon margin to decide ties if we want, but usually straight comparison works.
+        s1, a1, r1_true, s2, a2, r2_true = batch 
         labels = (r1_true > r2_true).float()
         
-        # 3. Calculate predicted segment rewards
-        # Shape: (Batch, 1)
-        sum_r1 = self.reward_model.get_segment_reward(s1, a1)
-        sum_r2 = self.reward_model.get_segment_reward(s2, a2)
-        
-        # 4. Bradley-Terry Loss (Log-likelihood of the human preference)
-        # P(sigma1 > sigma2) = exp(sum_r1) / (exp(sum_r1) + exp(sum_r2))
-        # This is equivalent to sigmoid(sum_r1 - sum_r2)
-        logits = sum_r1 - sum_r2
-        loss = F.binary_cross_entropy_with_logits(logits, labels)
-        #Pushes logits through softmax and gets a %, then compares it to labels to get loss
+        total_loss = 0
+        # If we're using an Ensemble, we train every judge in the Jury
+        if hasattr(self.reward_model, 'models'):
+            for model in self.reward_model.models:
+                sum_r1 = model.get_segment_reward(s1, a1)
+                sum_r2 = model.get_segment_reward(s2, a2)
+                logits = sum_r1 - sum_r2
+                loss = F.binary_cross_entropy_with_logits(logits, labels)
+                total_loss += loss
+        else:
+            # Fallback for single RewardModel
+            sum_r1 = self.reward_model.get_segment_reward(s1, a1)
+            sum_r2 = self.reward_model.get_segment_reward(s2, a2)
+            logits = sum_r1 - sum_r2
+            total_loss = F.binary_cross_entropy_with_logits(logits, labels)
+            #Pushes logits through softmax and gets a %, then compares it to labels to get loss
         
         # 5. Optimization
         self.optimizer.zero_grad()
-        loss.backward()
+        total_loss.backward()
         self.optimizer.step()
         
-        return loss.item()
+        return total_loss.item()
 
     def train_epoch(self, replay_buffer, iterations=100, batch_size=64, segment_len=50):
         """Trains for multiple iterations."""

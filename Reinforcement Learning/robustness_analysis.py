@@ -148,11 +148,11 @@ def run_analysis():
     plt.legend()
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     
-    if not os.path.exists("./analysis"):
-        os.makedirs("./analysis")
+    if not os.path.exists("./Graphs"):
+        os.makedirs("./Graphs")
         
-    plt.savefig("./analysis/robustness_results.png")
-    print("\n[SUCCESS] Analysis complete. Results saved to ./analysis/robustness_results.png")
+    plt.savefig("./Graphs/robustness_results.png")
+    print("\n[SUCCESS] Analysis complete. Results saved to ./Graphs/robustness_results.png")
     # plt.show()
 
 if __name__ == "__main__":
