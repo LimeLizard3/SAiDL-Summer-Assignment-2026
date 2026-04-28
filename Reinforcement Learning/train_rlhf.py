@@ -23,7 +23,7 @@ def train_rlhf(seed=0):
     np.random.seed(seed)
     
     state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[1]
+    action_dim = env.action_space.shape[0]
     max_action = float(env.action_space.high[0])
     seq_len = 32
     
@@ -70,27 +70,28 @@ def train_rlhf(seed=0):
     results_path = "results_rlhf/TD3_RLHF_S0.npy"
     os.makedirs("results_rlhf", exist_ok=True)
     
-    print(f"\n--- Starting RLHF Training (Seed={seed}) ---")
+    print(f"\n--- Starting Anchored RLHF Training (Seed={seed}) ---")
 
-    for t in range(int(1e5)):
+    for t in range(int(3e5)): # Increased to 300k for the Lock-In phase
         episode_timesteps += 1
 
-        # Select action with reduced exploration (Expert fine-tuning)
+        # Select action with DECAYING exploration (Expert fine-tuning)
+        # We start at 5% noise and decay down to 1% for a 'Perfect Finish'
+        noise_scale = max(0.01, 0.05 * (1 - t / 3e5))
+        
         state_norm = normalizer(state, update=False)
         action = policy.actor(
             torch.FloatTensor(state_norm).to(device).unsqueeze(0),
             torch.FloatTensor(np.zeros((1, seq_len-1, action_dim))).to(device)
         ).cpu().data.numpy().flatten()
         
-        # Add tiny bit of noise for stability (5%)
-        action = (action + np.random.normal(0, max_action * 0.05, size=action_dim)).clip(-max_action, max_action)
+        action = (action + np.random.normal(0, max_action * noise_scale, size=action_dim)).clip(-max_action, max_action)
 
         # Perform action
         next_state, env_reward, terminated, truncated, _ = env.step(action)
         episode_reward += env_reward
 
         # --- THE RLHF SUBSTITUTION ---
-        # The agent NEVER sees 'env_reward'. It only sees what the Judge thinks.
         learned_reward = reward_model.predict_reward(state_norm, action, method="min") * 50.0
         
         done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
@@ -102,7 +103,10 @@ def train_rlhf(seed=0):
         if t > 5000:
             policy.train(new_buffer, batch_size=512)
             
+            # Step the Schedulers every 1000 steps for the Lock-In
             if t % 1000 == 0:
+                policy.actor_scheduler.step()
+                policy.critic_scheduler.step()
                 rlhf_trainer.train_step(old_buffer, batch_size=16, segment_len=50)
                 rlhf_trainer.train_step(new_buffer, batch_size=32, segment_len=50)
 
