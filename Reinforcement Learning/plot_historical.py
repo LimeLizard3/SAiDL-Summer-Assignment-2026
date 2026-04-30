@@ -2,90 +2,42 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-def plot_baseline():
-    plt.figure(figsize=(10, 6))
-    seeds = [0, 1, 2]
-    all_rewards = []
+def plot_final_rlhf():
+    plt.figure(figsize=(12, 7))
     
-    for seed in seeds:
-        path = f"results/TD3_Hopper-v5_{seed}.npy"
-        if os.path.exists(path):
-            res = np.load(path)
-            plt.plot(res, alpha=0.3, label=f"MLP Seed {seed}")
-            all_rewards.append(res)
-    
-    if all_rewards:
-        mean_rewards = np.mean(all_rewards, axis=0)
-        plt.plot(mean_rewards, color='black', linewidth=2, label="MLP Mean")
-        
-    plt.title("Baseline: Standard TD3 (MLP) on Hopper-v5 (Original Unoptimized)")
-    plt.xlabel("Steps (x10000)")
-    plt.ylabel("Reward")
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig("Old Graphs/TD3_Baseline_Results_Old.png")
-    plt.close()
-
-def plot_transformer_comparison():
-    plt.figure(figsize=(10, 6))
-    lengths = [4, 8, 16, 32]
-    
-    # Plot MLP baseline mean for reference
-    mlp_rewards = []
-    for seed in [0, 1, 2]:
-        path = f"results/TD3_Hopper-v5_{seed}.npy"
-        if os.path.exists(path):
-            mlp_rewards.append(np.load(path))
-    if mlp_rewards:
-        plt.plot(np.mean(mlp_rewards, axis=0), color='black', linestyle='--', alpha=0.5, label="Standard TD3 (MLP)")
-
-    for L in lengths:
-        path = f"results_transformer/TD3_Transformer_L{L}_S0.npy"
-        if os.path.exists(path):
-            res = np.load(path)
-            plt.plot(res, label=f"Transformer (L={L})")
-            
-    plt.title("Hopper-v5: Transformer vs. MLP Baseline (Original 1M Steps)")
-    plt.xlabel("Training Steps (x10000)")
-    plt.ylabel("Average Evaluation Reward")
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig("Old Graphs/Transformer_Comparison_Old.png")
-    plt.close()
-
-def plot_rlhf():
-    plt.figure(figsize=(10, 6))
-    
-    # Plot MLP baseline for reference (Seed 0)
-    mlp_path = "results/TD3_Hopper-v5_0.npy"
+    # 1. Plot the CORRECT Optimized MLP Baseline
+    mlp_path = "results/TD3_Hopper-v5_0_stable.npy"
     if os.path.exists(mlp_path):
         mlp_res = np.load(mlp_path)
-        plt.plot(mlp_res, color='grey', linestyle='--', alpha=0.5, label="Standard TD3 (MLP)")
-
-    # Plot RLHF performance
+        # Resample to match RLHF evaluation frequency if needed
+        plt.plot(mlp_res, color='grey', linestyle='--', alpha=0.6, label="Optimized TD3 (MLP) - Stable Baseline")
+    
+    # 2. Plot the Transformer RLHF Performance
     rlhf_path = "results_rlhf/TD3_RLHF_S0.npy"
     if os.path.exists(rlhf_path):
         rlhf_res = np.load(rlhf_path)
+        # Plot the actual points
         plt.plot(rlhf_res, color='purple', linewidth=2, label="Transformer (RLHF - Learned Rewards)")
         
-        # Calculate Trendline (using a simple polynomial fit like the user's graph)
+        # 3. Calculate a proper Moving Average Trendline (instead of a risky polynomial)
         if len(rlhf_res) > 5:
-            z = np.polyfit(np.arange(len(rlhf_res)), rlhf_res, 3)
-            p = np.poly1d(z)
-            plt.plot(p(np.arange(len(rlhf_res))), color='red', linestyle='--', alpha=0.5, label="RLHF Trend")
+            window = 5
+            trend = np.convolve(rlhf_res, np.ones(window)/window, mode='valid')
+            plt.plot(np.arange(window-1, len(rlhf_res)), trend, color='red', linestyle='-', linewidth=2, label="RLHF Performance Trend")
 
-    plt.title("Task 2d: RLHF Ground-Truth Performance (Original Seed 0)")
-    plt.xlabel("Training Steps (x10000)")
-    plt.ylabel("Reward (Environment)")
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig("Old Graphs/RLHF_Performance_Old.png")
+    plt.title("Task 2d: Transformer RLHF vs. Optimized MLP Baseline", fontsize=14)
+    plt.xlabel("Evaluation Milestones (Every 5,000 steps)", fontsize=12)
+    plt.ylabel("Reward (Environment Ground Truth)", fontsize=12)
+    plt.legend(loc='upper left')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    # Ensure the axis matches our actual training duration
+    if os.path.exists(rlhf_path):
+        plt.xlim(0, max(len(rlhf_res), 60))
+        
+    plt.savefig("Graphs/RLHF_Final_Comparison.png", dpi=300)
+    print("Corrected Victory Graph saved to Graphs/RLHF_Final_Comparison.png")
     plt.close()
 
 if __name__ == "__main__":
-    if not os.path.exists("Old Graphs"):
-        os.makedirs("Old Graphs")
-    plot_baseline()
-    plot_transformer_comparison()
-    plot_rlhf()
-    print("Historical graphs regenerated from original .npy files.")
+    plot_final_rlhf()

@@ -72,43 +72,63 @@ def train_rlhf(seed=0):
     
     print(f"\n--- Starting Anchored RLHF Training (Seed={seed}) ---")
 
-    for t in range(int(3e5)): # Increased to 300k for the Lock-In phase
-        episode_timesteps += 1
+    try:
+        for t in range(int(3e5)):
+            episode_timesteps += 1
 
-        # Select action with DECAYING exploration (Expert fine-tuning)
-        # We start at 5% noise and decay down to 1% for a 'Perfect Finish'
-        noise_scale = max(0.01, 0.05 * (1 - t / 3e5))
-        
-        state_norm = normalizer(state, update=False)
-        action = policy.actor(
-            torch.FloatTensor(state_norm).to(device).unsqueeze(0),
-            torch.FloatTensor(np.zeros((1, seq_len-1, action_dim))).to(device)
-        ).cpu().data.numpy().flatten()
-        
-        action = (action + np.random.normal(0, max_action * noise_scale, size=action_dim)).clip(-max_action, max_action)
-
-        # Perform action
-        next_state, env_reward, terminated, truncated, _ = env.step(action)
-        episode_reward += env_reward
-
-        # --- THE RLHF SUBSTITUTION ---
-        learned_reward = reward_model.predict_reward(state_norm, action, method="min") * 50.0
-        
-        done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
-        new_buffer.add(state, action, next_state, learned_reward, done_bool)
-        
-        state = next_state
-        
-        # Training steps
-        if t > 5000:
-            policy.train(new_buffer, batch_size=512)
+            # Select action with DECAYING exploration (Expert fine-tuning)
+            noise_scale = max(0.01, 0.05 * (1 - t / 3e5))
             
-            # Step the Schedulers every 1000 steps for the Lock-In
-            if t % 1000 == 0:
-                policy.actor_scheduler.step()
-                policy.critic_scheduler.step()
-                rlhf_trainer.train_step(old_buffer, batch_size=16, segment_len=50)
-                rlhf_trainer.train_step(new_buffer, batch_size=32, segment_len=50)
+            state_norm = normalizer(state, update=False)
+            action = policy.actor(
+                torch.FloatTensor(state_norm).to(device).unsqueeze(0),
+                torch.FloatTensor(np.zeros((1, seq_len-1, action_dim))).to(device)
+            ).cpu().data.numpy().flatten()
+            
+            action = (action + np.random.normal(0, max_action * noise_scale, size=action_dim)).clip(-max_action, max_action)
+
+            # Perform action
+            next_state, env_reward, terminated, truncated, _ = env.step(action)
+            episode_reward += env_reward
+
+            # --- THE RLHF SUBSTITUTION (With Safety Cap) ---
+            # We clip the reward to prevent 'Reward Explosion' from breaking the agent
+            raw_learned = reward_model.predict_reward(state_norm, action, method="min") * 50.0
+            learned_reward = np.clip(raw_learned, -100, 100)
+            
+            done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
+            new_buffer.add(state, action, next_state, learned_reward, done_bool)
+            
+            state = next_state
+            
+            # Training steps
+            if t > 5000:
+                policy.train(new_buffer, batch_size=512)
+                
+                # Step the Schedulers every 1000 steps for the Lock-In
+                if t % 1000 == 0:
+                    policy.actor_scheduler.step()
+                    policy.critic_scheduler.step()
+                    rlhf_trainer.train_step(old_buffer, batch_size=16, segment_len=50)
+                    rlhf_trainer.train_step(new_buffer, batch_size=32, segment_len=50)
+
+            if terminated or truncated:
+                state, _ = env.reset()
+                episode_reward = 0
+                episode_timesteps = 0
+                episode_num += 1
+
+            # Evaluate periodically
+            if (t + 1) % 5000 == 0:
+                avg_reward = evaluate_policy(policy, "Hopper-v5", normalizer, seed)
+                evaluations.append(avg_reward)
+                np.save(results_path, evaluations)
+                print(f"Time steps: {t+1}, Average Reward: {avg_reward:.2f}, Noise: {noise_scale:.4f}")
+
+    except Exception as e:
+        print(f"\n[CRITICAL ERROR] Training interrupted: {e}")
+        np.save(results_path, evaluations)
+        print(f"Progress saved to {results_path}. Last Evaluation: {evaluations[-1] if evaluations else 'N/A'}")
 
         if terminated or truncated:
             state, _ = env.reset()

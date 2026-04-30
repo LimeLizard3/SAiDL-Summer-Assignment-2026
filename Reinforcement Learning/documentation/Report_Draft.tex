@@ -1,0 +1,134 @@
+\documentclass[11pt,a4paper]{article} % Remove 'draft' once all images are uploaded
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{subcaption}
+\sloppy 
+
+\geometry{margin=1in}
+
+\title{\textbf{SAiDL Summer Assignment 2026: Hardening Transformer-Based Reinforcement Learning for Partial Observability}}
+\author{Gautham [REDACTED]}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report details the implementation and optimization of a Causal Transformer-based Reinforcement Learning agent for the MuJoCo Hopper-v5 environment. We investigate the agent's ability to overcome Partial Observability (POMDP) through temporal attention mechanisms. Our results demonstrate that the Transformer architecture significantly outperforms standard MLP-based TD3 agents in environments with sensory failure, observational noise, and credit assignment delays. We further refine the agent through a Reinforcement Learning from Human Feedback (RLHF) pipeline utilizing a Jury Ensemble of reward models.
+\end{abstract}
+
+\section{Introduction}
+Reinforcement Learning (RL) agents often fail in real-world scenarios due to the non-Markovian nature of environments (POMDPs). Standard architectures like Multi-Layer Perceptrons (MLPs) lack the memory required to reconstruct state variables from historical observations. This project explores the use of a Causal Transformer to solve these challenges.
+
+\section{Task 1: Transformer Architectures for Locomotion}
+\subsection{The Foundation: Twin Delayed DDPG (TD3)}
+Before implementing the Transformer, we established a robust Reinforcement Learning framework using \textbf{Twin Delayed DDPG (TD3)}. TD3 improves upon standard DDPG by addressing the overestimation bias of Q-values through clipped double-Q learning, target policy smoothing, and delayed policy updates.
+
+\subsection{Initial Challenges: The Unoptimized Baseline}
+Our initial experiments with the Transformer architecture exhibited significant instability and slow convergence. As shown in Figure \ref{fig:before_comparison}, the early iterations suffered from high variance and a low reward ceiling, often failing to maintain a stable gait beyond 200 points.
+
+\begin{figure}[!ht]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Old Graphs/TD3_Baseline_Results_Old.png}
+        \caption{Initial MLP Baseline (Seed 0-2).}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Old Graphs/Transformer_Comparison_Old.png}
+        \caption{Unoptimized Transformer Ablation.}
+    \end{subfigure}
+    \caption{Phase 1 (The Before): Results from the early stages. Note the erratic convergence.}
+    \label{fig:before_comparison}
+\end{figure}
+
+\subsection{Engineering Optimizations and Stability Fixes}
+To overcome these hurdles, we implemented a series of industrial-grade optimizations:
+\begin{itemize}
+    \item \textbf{AMP (Automatic Mixed Precision)}: We integrated \texttt{GradScaler} to allow for 16-bit precision training, accelerating attention head learning.
+    \item \textbf{Global Normalization Strategy}: We shifted to a global \textbf{RunningMeanStd} algorithm to stabilize the Transformer's input distribution.
+    \item \textbf{Causal History Buffer}: We re-engineered the experience replay logic to treat the environment as a sequence of transitions, preventing future leakage.
+\end{itemize}
+
+\subsection{Final Results: The Optimized Plateau}
+As shown in Figure \ref{fig:task1_comparison}, these optimizations resulted in a dramatic increase in performance. The agent now achieves a stable plateau of $\sim$600 points.
+
+\begin{figure}[!ht]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Graphs/TD3_Baseline_Results.png}
+        \caption{Final MLP Baseline.}
+        \label{fig:mlp_baseline}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Graphs/Transformer_Comparison.png}
+        \caption{Optimized Transformer Ablation.}
+        \label{fig:transformer_comparison}
+    \end{subfigure}
+    \caption{Phase 2 (The After): Final performance comparison after implementing optimizations.}
+    \label{fig:task1_comparison}
+\end{figure}
+
+\section{Task 2: The Robustness Frontier (POMDP)}
+\subsection{2a \& 2b: Sensor Failure and Noise (The Blindfold Test)}
+In the first stressor, we disabled all velocity-related sensors. Observations were masked to provide only positional and joint angle data, with added Gaussian noise ($\sigma=0.1$).
+
+\subsection{2c: Credit Assignment Delay (The Lag Test)}
+The second stressor introduced a 10-frame observation lag, creating a "Temporal Disconnect" between actions and sensory responses.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.7\textwidth]{Graphs/Combined_POMDP_Final.png}
+    \caption{The Triple-Threat Victory: Transformer performance under simultaneous stressors.}
+    \label{fig:combined_pomdp}
+\end{figure}
+
+\subsection{2d: Reinforcement Learning from Human Feedback (RLHF)}
+We implemented an RLHF pipeline utilizing a \textbf{Jury of three independent Reward Models}.
+\begin{equation}
+R_{Jury}(s, a) = \min(RM_1, RM_2, RM_3)
+\end{equation}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.7\textwidth]{Graphs/RLHF_Final_Comparison.png}
+    \caption{RLHF Alignment: Performance against the Optimized MLP baseline.}
+    \label{fig:rlhf_final}
+\end{figure}
+
+\section{Task 3: Diagnostic Analysis and Positional Encodings}
+\subsection{Attention Saliency and Attribution}
+We implemented a \textbf{Saliency Attribution Engine} and found that the agent exhibits "Action Shots"---sharp focus on the moments exactly 0.5s prior.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.7\textwidth]{Graphs/Attribution_Comparison.png}
+    \caption{Saliency Attribution: Spikes indicate critical historical frames.}
+    \label{fig:attribution}
+\end{figure}
+
+\subsection{The Temporal Ruler: RoPE vs. Sinusoidal Encodings}
+We benchmarked Rotary Positional Embeddings (RoPE) against Sinusoidal Encodings. Sinusoidal Encodings provided the most stable "Temporal Ruler."
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.7\textwidth]{Graphs/PosEnc_Ablation.png}
+    \caption{Positional Encoding Impact: Sinusoidal encodings yielded higher stability.}
+    \label{fig:pos_enc_ablation}
+\end{figure}
+
+\subsection{Conclusion: The Surgical Calculus}
+Our research demonstrates that a Causal Transformer equipped with Sinusoidal Positional Encodings is capable of performing "Surgical Calculus" on its own history, mathematically deriving required derivatives for balance.
+
+\end{document}
