@@ -1,11 +1,19 @@
+import os
+import sys
+# pyrefly: ignore [missing-import]
 import torch
+# pyrefly: ignore [missing-import]
 import numpy as np
+# pyrefly: ignore [missing-import]
 import gymnasium as gym
+from collections import deque
+# pyrefly: ignore [missing-import]
+import matplotlib.pyplot as plt
+
+
 from td3 import TD3
 from model import Normalizer
-from collections import deque
-import matplotlib.pyplot as plt
-import os
+
 #The whole point of this file is to see how Transformer survived robustness and why MLP didn't
 
 def calculate_entropy_per_step(attn_weights): #Calculates Shannon entropy for a single sample

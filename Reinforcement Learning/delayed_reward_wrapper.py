@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 import gymnasium as gym
 
 class DelayedRewardWrapper(gym.RewardWrapper):

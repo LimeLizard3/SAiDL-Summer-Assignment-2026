@@ -1,6 +1,10 @@
+# pyrefly: ignore [missing-import]
 import torch
+# pyrefly: ignore [missing-import]
 import torch.nn as nn
+# pyrefly: ignore [missing-import]
 import torch.nn.functional as F
+# pyrefly: ignore [missing-import]
 import numpy as np
 import math
 
@@ -174,10 +178,17 @@ class TransformerActor(nn.Module):
         #With requires_grad_(True), we track every math operation done to the data, as we want to backprop later
         
         if return_attn:
-            action, attn = self.forward(state_seq, action_seq, return_attn=True)
-            return action.cpu().data.numpy().flatten(), attn.cpu().data.numpy()
+            res = self.forward(state_seq, action_seq, return_attn=True)
+            if isinstance(res, tuple): #Is res a tuple?
+                action, attn = res
+            else:
+                action, attn = res, None
+            return action.cpu().data.numpy().flatten(), attn.cpu().data.numpy() if attn is not None else None
         
-        return self.forward(state_seq, action_seq).cpu().data.numpy().flatten()
+        action = self.forward(state_seq, action_seq)
+        if isinstance(action, tuple):
+            action = action[0]
+        return action.cpu().data.numpy().flatten()
         #Moves results to CPU, detaches from GD tracking graph, converts to a standard 1D NumPy array
 
     def get_attribution(self, state_history, action_history):
@@ -187,6 +198,8 @@ class TransformerActor(nn.Module):
         
         # 1. Forward Pass to capture maps
         action = self.forward(state_seq, action_seq)
+        if isinstance(action, tuple):
+            action = action[0]
         
         # 2. Backward Pass from the predicted action norm
         self.zero_grad()

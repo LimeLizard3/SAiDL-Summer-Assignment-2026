@@ -1,4 +1,6 @@
+# pyrefly: ignore [missing-import]
 import numpy as np
+# pyrefly: ignore [missing-import]
 import matplotlib.pyplot as plt
 import os
 
@@ -14,6 +16,7 @@ def plot_final_rlhf():
     
     # 2. Plot the Transformer RLHF Performance
     rlhf_path = "results_rlhf/TD3_RLHF_S0.npy"
+    rlhf_res = None
     if os.path.exists(rlhf_path):
         rlhf_res = np.load(rlhf_path)
         # Plot the actual points
@@ -32,7 +35,7 @@ def plot_final_rlhf():
     plt.grid(True, linestyle='--', alpha=0.5)
     
     # Ensure the axis matches our actual training duration
-    if os.path.exists(rlhf_path):
+    if rlhf_res is not None:
         plt.xlim(0, max(len(rlhf_res), 60))
         
     plt.savefig("Graphs/RLHF_Final_Comparison.png", dpi=300)

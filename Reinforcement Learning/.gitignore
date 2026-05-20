@@ -3,3 +3,7 @@ __pycache__/
 *.npz
 *.log
 logs/
+ad_dataset/
+*.pth
+*.pkl
+*.npy
