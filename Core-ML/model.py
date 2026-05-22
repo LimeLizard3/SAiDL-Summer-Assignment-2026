@@ -1,6 +1,6 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore
+import torch.nn as nn  # type: ignore
+import torch.nn.functional as F  # type: ignore
 import math
 from attention_variants import SlidingWindowAttention, MultiQueryAttention, LinearAttention, AFTAttention
 from positional_logic import apply_rotary_emb, build_alibi_bias
@@ -67,6 +67,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         # Select the attention engine based on config
+        self.attn: nn.Module
         if config.attention_type == "mqa":
             self.attn = MultiQueryAttention(config.d_model, config.n_heads, config.dropout)
         elif config.attention_type == "linear":

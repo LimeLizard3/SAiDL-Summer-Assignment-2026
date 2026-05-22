@@ -12,12 +12,12 @@ def auto_install():
 
 auto_install()
 
-import torch
-import torch.nn.functional as F
+import torch  # type: ignore
+import torch.nn.functional as F  # type: ignore
 import time
 import math
 from data import get_dataloaders
-from model import TransformerLM
+from model import TransformerLM  # type: ignore
 from config import TransformerConfig
 
 def evaluate(model, val_loader, device):

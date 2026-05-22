@@ -1,7 +1,7 @@
-import torch
-from torch.utils.data import DataLoader, Dataset
-from datasets import load_dataset
-import tiktoken
+import torch  # type: ignore
+from torch.utils.data import DataLoader, Dataset  # type: ignore
+from datasets import load_dataset  # type: ignore
+import tiktoken  # type: ignore
 
 class WikiTextDataset(Dataset):
     def __init__(self, data, seq_len):
@@ -11,8 +11,8 @@ class WikiTextDataset(Dataset):
     def __len__(self):
         return len(self.data) // self.seq_len
 
-    def __getitem__(self, idx):
-        start = idx * self.seq_len
+    def __getitem__(self, index):
+        start = index * self.seq_len
         end = start + self.seq_len
         #The whole thing cuts out one chunk
         chunk = self.data[start:end+1]

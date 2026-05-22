@@ -1,10 +1,10 @@
-import torch
-import torch.nn as nn
+import torch  # type: ignore
+import torch.nn as nn  # type: ignore
 import time
 import math
 import os
 from config import TransformerConfig
-from model import TransformerLM
+from model import TransformerLM  # type: ignore
 from data import get_dataloaders
 
 def get_gpu_memory():

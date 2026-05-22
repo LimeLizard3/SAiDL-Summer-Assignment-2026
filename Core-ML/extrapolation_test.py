@@ -1,9 +1,9 @@
-import torch
-import torch.nn as nn
+import torch  # type: ignore
+import torch.nn as nn  # type: ignore
 import math
 import time
 from config import TransformerConfig
-from model import TransformerLM
+from model import TransformerLM  # type: ignore
 from data import get_dataloaders
 
 def evaluate_length(model, device, seq_len, batch_size=2):

@@ -1,7 +1,7 @@
-import torch
-import torch.nn as nn
+import torch  # type: ignore
+import torch.nn as nn  # type: ignore
 from config import TransformerConfig
-from model import TransformerLM
+from model import TransformerLM  # type: ignore
 
 def test_causality(attention_type="standard", aft_mode="full", use_conv=False):
     desc = f"{attention_type.upper()}"
