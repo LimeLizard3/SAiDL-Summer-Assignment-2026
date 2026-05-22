@@ -24,7 +24,8 @@ We extended continuous deep reinforcement learning on **Gymnasium's Hopper-v5** 
   * **Delayed Reward Challenge:** Delaying reward feedback by $K=10$ steps to test sparse credit assignment.
 * **Algorithm Distillation (AD):** Pre-trained sequence-conditioned Transformers on trajectories of active policy learning to achieve in-context reinforcement learning.
 * **RLHF (Reinforcement Learning from Human Feedback):** Trained a preference-based reward model from simulated query pairs to align TD3 policies with preferences.
-* **Mathematical & Engineering Deep-Dive:** See the details in [optimizations.md](./Reinforcement%20Learning/optimizations.md).
+* **Academic Report:** A complete LaTeX publication draft detailing the RL methodology, benchmarks, and sequence policy evaluation is available at [SaiDL_RL_Report.tex](./Reinforcement%20Learning/documentation/SaiDL_RL_Report.tex).
+* **Mathematical & Engineering Deep-Dive:** See the details in [Optimizations.md](./Reinforcement%20Learning/documentation/Optimizations.md).
 
 ---
 
