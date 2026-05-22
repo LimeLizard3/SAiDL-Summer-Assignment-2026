@@ -75,7 +75,9 @@ def main():
     parser.add_argument("--start_timesteps", type=int, default=25000, help="Random exploration steps")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size for training")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
-    parser.add_argument("--save_dir", type=str, default="./results_xlstm", help="Results save directory")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_save_dir = os.path.join(script_dir, "results_xlstm")
+    parser.add_argument("--save_dir", type=str, default=default_save_dir, help="Results save directory")
     args = parser.parse_args()
 
     print(f"\n========================================")

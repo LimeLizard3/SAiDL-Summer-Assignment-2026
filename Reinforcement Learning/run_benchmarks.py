@@ -19,9 +19,10 @@ def run_cmd(cmd):
 
 def main():
     max_steps = 150000
-    save_dir = "./results_xlstm"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    save_dir = os.path.join(script_dir, "results_xlstm")
     os.makedirs(save_dir, exist_ok=True)
-    os.makedirs("./Reinforcement Learning/Graphs", exist_ok=True)
+    os.makedirs(os.path.join(script_dir, "Graphs"), exist_ok=True)
 
     # 1. RUN TRAINING RUNS
     # We run side-by-side comparisons of xLSTM vs. Transformer under POMDP (Partial) and Delayed-Reward configurations
@@ -51,7 +52,7 @@ def main():
             except Exception as e:
                 print(f"Could not load existing results for {run['policy']} ({run['mode']}): {e}. Restarting training...")
             
-        cmd = f"python -u \"Reinforcement Learning/train_xlstm.py\" --policy {run['policy']} --mode {run['mode']} --max_timesteps {run['steps']} --seq_len 16 --seed 0 --save_dir {save_dir}"
+        cmd = f"python -u \"{os.path.join(script_dir, 'train_xlstm.py')}\" --policy {run['policy']} --mode {run['mode']} --max_timesteps {run['steps']} --seq_len 16 --seed 0 --save_dir \"{save_dir}\""
         run_cmd(cmd)
 
     # 2. PLOT RESULTS
@@ -98,7 +99,7 @@ def main():
         plt.tight_layout()
         
         mode_suffix = "POMDP" if mode == "partial" else "DelayedReward"
-        plot_path = f"./Reinforcement Learning/Graphs/xLSTM_vs_TD3_{mode_suffix}.png"
+        plot_path = os.path.join(script_dir, "Graphs", f"xLSTM_vs_TD3_{mode_suffix}.png")
         plt.savefig(plot_path, bbox_inches='tight')
         print(f"Saved plot to {plot_path}")
 
