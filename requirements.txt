@@ -1,0 +1,8 @@
+# SAiDL Summer Induction Assignment 2026 Dependencies
+torch>=2.0.0
+numpy>=1.24.0
+gymnasium>=1.0.0
+mujoco>=3.0.0
+datasets>=2.12.0
+tiktoken>=0.4.0
+matplotlib>=3.7.0
