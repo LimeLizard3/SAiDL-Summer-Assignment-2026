@@ -74,6 +74,26 @@ To enhance the model's ability to capture short-range syntactic structures (n-gr
     \item \textbf{Design B (Interleaved)}: Replaces alternating attention layers with Depthwise Separable Causal 1D Convolutions, drastically reducing parameter count and memory usage.
 \end{itemize}
 
+\subsection{Bonus Task: Attention-Free Transformer (AFT)}
+To completely eliminate the $O(N^2)$ dot-product attention matrix, we integrated the Attention-Free Transformer (AFT) architecture. AFT utilizes a query-gated, element-wise aggregation with learned positional biases.
+
+\begin{table}[h]
+    \centering
+    \caption{AFT Bonus Benchmarks}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Variant} & \textbf{PPL} ($\downarrow$) & \textbf{Tokens/Sec} ($\uparrow$) & \textbf{VRAM (MB)} ($\downarrow$) \\
+        \midrule
+        AFT-Simple & 19298.07 & \textbf{29779.9} & \textbf{522.2} \\
+        AFT-Local  & \textbf{17176.86} & 16803.3 & 590.1 \\
+        AFT-Full   & 19405.19 & 16847.6 & 596.2 \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:aft_benchmarks}
+\end{table}
+
+The AFT variants dramatically shifted our performance landscape. \textbf{AFT-Local} surpassed all previous models to become the highest precision configuration, while \textbf{AFT-Simple} achieved the highest inference throughput of the entire project.
+
 \section{Workflow and Implementation Requirements}
 
 To ensure reproducibility across all project phases, we established a systematic execution workflow and identified the specific Python file requirements for each task. The central infrastructure consists of \texttt{model.py} (architecture), \texttt{config.py} (parameters), and \texttt{data.py} (WikiText-2 ingestion).
@@ -139,26 +159,6 @@ To evaluate length generalization, models trained on sequence length $L_{train}=
 \end{table}
 
 The Absolute Positional Encoding catastrophically failed when exposed to out-of-distribution sequence lengths, producing infinite perplexity. Conversely, both RoPE and ALiBi maintained robust mathematical stability, validating their efficacy in infinite-context or streaming scenarios.
-
-\subsection{Bonus Task: Attention-Free Transformer (AFT)}
-To completely eliminate the $O(N^2)$ dot-product attention matrix, we integrated the Attention-Free Transformer (AFT) architecture. AFT utilizes a query-gated, element-wise aggregation with learned positional biases.
-
-\begin{table}[h]
-    \centering
-    \caption{AFT Bonus Benchmarks}
-    \begin{tabular}{lccc}
-        \toprule
-        \textbf{Variant} & \textbf{PPL} ($\downarrow$) & \textbf{Tokens/Sec} ($\uparrow$) & \textbf{VRAM (MB)} ($\downarrow$) \\
-        \midrule
-        AFT-Simple & 19298.07 & \textbf{29779.9} & \textbf{522.2} \\
-        AFT-Local  & \textbf{17176.86} & 16803.3 & 590.1 \\
-        AFT-Full   & 19405.19 & 16847.6 & 596.2 \\
-        \bottomrule
-    \end{tabular}
-    \label{tab:aft_benchmarks}
-\end{table}
-
-The AFT variants dramatically shifted our performance landscape. \textbf{AFT-Local} surpassed all previous models to become the highest precision configuration, while \textbf{AFT-Simple} achieved the highest inference throughput of the entire project.
 
 \section{Conclusion}
 
