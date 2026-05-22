@@ -137,6 +137,21 @@ The modular architectures were benchmarked on Perplexity (PPL), Inference Speed,
 
 ---
 
+## 📊 Reinforcement Learning Performance Summary
+
+The sequence policy networks (Causal Transformer vs. xLSTM) were benchmarked on Hopper-v5 under two stressors: Partial Observability (POMDP / velocity masking) and Delayed Rewards ($K=10$):
+
+| Stressor Challenge | Architecture | Peak Reward $\uparrow$ | Final Reward | Overall Mean Reward | Post-Exploration Mean (Step $\ge$ 25k) | Peak Step |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **POMDP (Partial Obs)** | Causal Transformer | 82.42 | 73.53 | 62.34 $\pm$ 8.33 | **62.89 $\pm$ 8.98** | 110,000 |
+| | **xLSTM** | **83.71** | **75.12** | 52.65 $\pm$ 22.98 | 61.95 $\pm$ 10.72 | **75,000** |
+| **Delayed Reward ($k=10$)**| Causal Transformer | **399.71** | **399.53** | **137.29 $\pm$ 138.94**| **155.51 $\pm$ 145.47** | 125,000 |
+| | **xLSTM** | 320.02 | 156.71 | 90.23 $\pm$ 85.16 | 106.97 $\pm$ 83.80 | 130,000 |
+
+*For in-depth discussion on memory bottlenecks, state estimation capabilities, and sequence-based policies, see the full [SaiDL_RL_Report.tex](./Reinforcement%20Learning/documentation/SaiDL_RL_Report.tex).*
+
+---
+
 ## 🛠️ Advanced Engineering & Algorithmic Optimizations
 
 We implemented critical optimizations to scale sequence training and enhance generalization stability:
