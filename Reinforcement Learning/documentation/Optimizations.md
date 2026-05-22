@@ -187,3 +187,152 @@ The project is now finalized for submission:
 *   **RLHF Suite**: Stabilized and online-aware via `train_rlhf.py` and `reward_model.py` with Jury consensus.
 
 *(Every challenge—from sensor-crushing to poisoned judges—was identified through rigorous diagnostic plotting and solved through targeted architectural hardening. The project successfully proves that causal Transformers significantly outperform reactive MLPs in complex, noisy, and partially observable environments.)*
+
+---
+
+## 15. Algorithm Distillation & Sequence Modeling Optimizations
+
+This section details the critical algorithmic and engineering optimizations implemented in the Algorithm Distillation (AD) and sequence-based reinforcement learning models.
+
+### 15.1. Action Masking (Action Dropout) to Solve Causal Confusion
+
+#### The Problem: Causal Confusion & Copycat Behavior
+In sequence-conditioned imitation learning and Algorithm Distillation, the Transformer is trained to predict the next action $a_t$ given the history of previous states, actions, and rewards:
+$$\mathcal{H}_t = (s_1, a_1, r_1, \dots, s_t)$$
+
+During offline training, the Transformer seeks the path of least resistance to minimize its Mean Squared Error (MSE) loss. In continuous control environments (like Hopper), sequential actions are highly correlated due to physical smoothness:
+$$a_t \approx a_{t-1}$$
+
+As training progresses and the offline loss drops, the Transformer learns to exploit this shortcut, effectively ignoring the state history $s_t$ and simply acting as a "copycat" that echoes $a_{t-1}$. 
+
+During online evaluation, when the agent makes a minor prediction error, this error is appended to the history buffer. On the next step, the model copies its own incorrect action, triggering a compounding loop of errors. The Hopper instantly loses balance and falls over, causing the reward to drop from $\approx 500+$ to $\approx 16$ (falling instantly).
+
+#### The Optimization: Scheduled Action Masking & History Jitter
+To prevent both early causal confusion and late-epoch overfitting, we implement a joint regularization strategy:
+
+##### 1. Scheduled Action Masking (Curriculum Dropout)
+Instead of a fixed 30% dropout rate, the action masking probability ($p_{mask}$) increases linearly across epochs:
+$$p_{mask} = \min(0.2 + 0.1 \times \text{epoch}, 0.8)$$
+* **Early Epochs (Epoch 1-2):** A low masking probability ($0.2$ - $0.3$) provides clean history cues, allowing the Transformer to quickly map basic sequence associations.
+* **Late Epochs (Epoch 7-9):** A high masking probability ($0.8$) forces the network to completely ignore past actions, preventing the model from developing causal shortcuts as the training loss drops.
+
+##### 2. History Jitter (Context Data Augmentation)
+We inject small Gaussian noise into the state, action, and reward histories fed into the Transformer during training. This prevents the model from memorizing exact trajectory paths:
+```python
+# Apply Scheduled Action Masking
+p_mask = min(0.2 + 0.1 * epoch, 0.8)
+mask = (torch.rand(actions.shape[:-1], device=device) > p_mask).unsqueeze(-1).float()
+masked_actions = actions * mask
+
+# Apply History Jitter (noise only on active history inputs)
+jittered_states = states + torch.randn_like(states) * 0.01
+jittered_actions = masked_actions + (torch.randn_like(actions) * 0.005) * mask
+jittered_rewards = rewards + torch.randn_like(rewards) * 0.01
+
+# Predict actions from jittered/masked context
+with autocast():
+    pred_actions = model(jittered_states, jittered_actions, jittered_rewards, timesteps)
+    loss = criterion(pred_actions, actions)
+```
+* **Preserving Targets:** Jitter and masking are applied **only to the input context** of the model. The loss target remains the clean, unmasked, and unjittered expert `actions`. This forces the Transformer to reconstruct clean expert behavior from noisy, incomplete feedback histories.
+
+#### Theoretical Impact
+This break in causality and memorization acts as a powerful regularizer. The Transformer is blocked from copycatting or memorizing specific trajectory steps, forcing it to generalize the reinforcement learning policy in-context.
+
+| Metric | Without Action Masking | With Constant Action Masking | With Scheduled Masking & Jitter |
+|---|---|---|---|
+| **Epoch 1 Eval Reward** | 491.16 | 622.03 | *Training...* |
+| **Epoch 2 Eval Reward** | 19.53 (Collapsed) | 568.46 (Stable) | *Training...* |
+| **Epoch 3 Eval Reward** | 18.84 (Collapsed) | 595.39 (Stable) | *Training...* |
+
+---
+
+### 15.2. Automatic Mixed Precision (AMP) for Sequence Scaling
+
+#### The Problem: Memory and Compute Bottlenecks
+Sequence-conditioned Transformers process long sequences ($L=100$) interleaving states, actions, and rewards. Since attention scales quadratically with sequence length $\mathcal{O}((3L)^2)$, training on sequence batches consumes substantial VRAM and execution time.
+
+#### The Optimization: PyTorch native AMP
+We integrated `torch.amp` (via `autocast` and `GradScaler`) to run computation in half-precision (float16) while maintaining parameters in single-precision (float32):
+
+```python
+from torch.cuda.amp import GradScaler, autocast
+
+scaler = GradScaler()
+
+# Forward pass under autocast
+with autocast():
+    pred_actions = model(states, masked_actions, rewards, timesteps)
+    loss = criterion(pred_actions, actions) / accumulation_steps
+
+# Backward pass and step
+scaler.scale(loss).backward()
+if (i + 1) % accumulation_steps == 0:
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad()
+```
+
+1. **Autocast:** Dynamically casts mathematical operations (like matrix multiplications in multi-head attention) to `float16`, accelerating computation on GPU Tensor Cores.
+2. **GradScaler:** Prevents floating-point underflow (where small gradients represented in float16 scale down to zero) by multiplying losses by a scale factor before backpropagation, then unscaling them before the optimizer step.
+
+---
+
+### 15.3. Gradient Accumulation for Effective Batch Size Scaling
+
+#### The Problem: Memory Limits
+To stabilize Transformer training, a large effective batch size (e.g., 512) is needed. However, storing the activations for a batch size of 512 over sequence length 100 exceeds the VRAM limit of typical consumer GPUs, causing Out-Of-Memory (OOM) errors.
+
+#### The Optimization: Accumulation Steps
+We use gradient accumulation to split a batch of size 512 into 4 micro-batches of size 128:
+
+```python
+# Accumulate gradients over multiple micro-batches
+loss = criterion(pred_actions, actions) / accumulation_steps
+scaler.scale(loss).backward()
+
+if (i + 1) % accumulation_steps == 0:
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad()
+```
+
+* We divide the loss by `accumulation_steps` (4) to ensure the gradient magnitude is correctly normalized.
+* We perform backpropagation on each micro-batch to accumulate the gradients in the parameter buffers.
+* The optimizer weights are updated only once every 4 steps, saving substantial memory while achieving the optimization behavior of a batch size of 512.
+
+---
+
+### 15.4. xLSTM Recurrent Loop Projection Offloading
+
+#### The Problem: Recurrent Cell Overhead
+In our custom xLSTM implementation (`xlstm_model.py`), sLSTM and mLSTM layers require sequentially iterating over the time dimension ($L=16$ or $L=32$):
+```python
+for t in range(L):
+    h_t, C, n, m = self.cell(x_t, C, n, m)
+```
+If we perform the input-to-hidden projections (which are linear layers) inside the recurrent loop, PyTorch has to launch multiple small kernels on the GPU for each time-step. This introduces substantial GPU kernel launch overhead, slowing down training.
+
+#### The Optimization: Pre-Projection Offloading
+For sLSTM and mLSTM layers, all projections that depend solely on the input sequence $X \in \mathbb{R}^{B \times L \times D}$ can be computed in parallel *outside* the recurrent loop.
+
+##### mLSTM Optimization:
+Instead of projecting $Q, K, V$ and gates inside `MultiHeadmLSTMCell` step-by-step:
+```python
+# Project whole sequence at once outside the loop
+Q_all = self.q_proj(X_conv)     # Shape: (B, L, H * d_k)
+K_all = self.k_proj(X_conv)     # Shape: (B, L, H * d_k)
+V_all = self.v_proj(X_conv)     # Shape: (B, L, H * d_k)
+Gates_all = self.W_gates(X_conv) # Shape: (B, L, 3 * H)
+
+# Inside the sequential loop, simply slice the pre-computed projections:
+for t in range(L):
+    q_t = Q_all[:, t, :]
+    k_t = K_all[:, t, :]
+    v_t = V_all[:, t, :]
+    gates_t = Gates_all[:, t, :]
+    # Update matrix state C and normalizer vector n
+```
+
+This reduces the sequential step operations to pure element-wise recurrent updates, bypassing GPU latency bottlenecks.
+

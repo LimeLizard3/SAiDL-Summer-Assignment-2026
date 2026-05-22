@@ -22,7 +22,7 @@ def eval_policy(policy, env_name, seed, normalizer, eval_episodes=10):
                                                            #to give us the action that we need. Instead, we call it policy 
             state, reward, terminated, truncated, _ = eval_env.step(action) #.step() feeds the AI into the simulator. Terminated tells us if it died & truncated if it ran out of time
             done = terminated or truncated #Checks to see if the AI is alive and has time
-            avg_reward += reward 
+            avg_reward += float(reward) 
 
     avg_reward /= eval_episodes
     print(f"---------------------------------------")
@@ -39,9 +39,18 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
     torch.manual_seed(seed) #Sets up the seed
     np.random.seed(seed) #Tells everything to pick their Nos.
     
+    assert isinstance(env.observation_space, gym.spaces.Box)
+    assert isinstance(env.action_space, gym.spaces.Box)
     state_dim = env.observation_space.shape[0] #How many sensors?
     action_dim = env.action_space.shape[0] #How many actions?
     max_action = float(env.action_space.high[0])
+
+    # Get max episode steps safely
+    max_episode_steps = getattr(env, "_max_episode_steps", None)
+    if max_episode_steps is None and hasattr(env, "spec") and env.spec is not None:
+        max_episode_steps = env.spec.max_episode_steps
+    if max_episode_steps is None:
+        max_episode_steps = 1000
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -87,20 +96,17 @@ def train_seed(seed, env_name="Hopper-v5", max_timesteps=1e6, start_timesteps=25
 
         # Perform action
         next_state, reward, terminated, truncated, _ = env.step(action)
-        done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
+        done_bool = float(terminated) if episode_timesteps < max_episode_steps else 0.0
 
         # Store in buffer
         replay_buffer.add(state, action, next_state, reward, done_bool)
 
         state = next_state
-        episode_reward += reward
+        episode_reward += float(reward)
 
         # Train agent
         if t >= start_timesteps:
             policy.train(replay_buffer, batch_size)
-            # [STABILITY] Decay learning rates as the agent matures to prevent last minute panic
-            policy.actor_scheduler.step()
-            policy.critic_scheduler.step()
 
         if terminated or truncated:
             print(f"Total T: {t+1} Episode Num: {episode_num+1} Reward: {episode_reward:.3f}")

@@ -20,6 +20,8 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
         done = False
         
         # Initialize history for the Transformer
+        assert isinstance(eval_env.observation_space, gym.spaces.Box)
+        assert isinstance(eval_env.action_space, gym.spaces.Box)
         state_dim = eval_env.observation_space.shape[0] #How many sensors?
         action_dim = eval_env.action_space.shape[0] #How many actions?
         state_history = deque([np.zeros(state_dim) for _ in range(seq_len)], maxlen=seq_len)
@@ -42,7 +44,7 @@ def eval_policy(policy, env_name, seed, normalizer, seq_len, eval_episodes=10):
             action_history.append(action)
             
             done = terminated or truncated
-            avg_reward += reward
+            avg_reward += float(reward)
 
     avg_reward /= eval_episodes
     print(f"---------------------------------------")
@@ -58,9 +60,19 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
     torch.manual_seed(seed) #Ensures randomness is controlled and makes debugging possible
     np.random.seed(seed)
     
+    assert isinstance(env.observation_space, gym.spaces.Box)
+    assert isinstance(env.action_space, gym.spaces.Box)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     max_action = float(env.action_space.high[0])
+    
+    # Get max episode steps safely
+    max_episode_steps = getattr(env, "_max_episode_steps", None)
+    if max_episode_steps is None and hasattr(env, "spec") and env.spec is not None:
+        max_episode_steps = env.spec.max_episode_steps
+    if max_episode_steps is None:
+        max_episode_steps = 1000
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize components
@@ -128,17 +140,14 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
         next_state, reward, terminated, truncated, _ = env.step(action)
         action_history.append(action)
         
-        done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
+        done_bool = float(terminated) if episode_timesteps < max_episode_steps else 0.0
         replay_buffer.add(state, action, next_state, reward, done_bool)
 
         state = next_state
-        episode_reward += reward
+        episode_reward += float(reward)
 
         if t >= start_timesteps:
             policy.train(replay_buffer, batch_size)
-            # [STABILITY] Slow learning rate decay for the Transformer
-            policy.actor_scheduler.step()
-            policy.critic_scheduler.step()
 
         if terminated or truncated:
             state, _ = env.reset()
@@ -150,7 +159,7 @@ def train_transformer(seq_len, seed=0, env_name="Hopper-v5", max_timesteps=10000
         if (t + 1) % 5000 == 0: 
             eval_reward = eval_policy(policy, env_name, seed, normalizer, seq_len)
             evaluations.append(eval_reward)
-            np.save(results_path[:-4], evaluations) 
+            np.save(os.path.splitext(results_path)[0], evaluations) 
             policy.save(model_path)
             normalizer.save(model_path)
             

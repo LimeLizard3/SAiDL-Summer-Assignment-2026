@@ -22,20 +22,26 @@ class TD3:
         noise_clip=0.5,
         policy_freq=2,
         use_transformer=False,
+        use_xlstm=False,
         seq_len=32,
         pos_encoding_type='learned' #You can easily change this later
     ):
         self.use_transformer = use_transformer
+        self.use_xlstm = use_xlstm
         self.seq_len = seq_len
         self.pos_encoding_type = pos_encoding_type
         
-        if use_transformer:
+        self.actor: torch.nn.Module
+        if use_xlstm:
+            from xlstm_model import xLSTMActor
+            self.actor = xLSTMActor(state_dim, action_dim, max_action, max_len=seq_len).to(device)
+        elif use_transformer:
             from model import TransformerActor
             self.actor = TransformerActor(state_dim, action_dim, max_action, pos_encoding_type=pos_encoding_type).to(device)
         else:
             self.actor = Actor(state_dim, action_dim, max_action).to(device) #Remember, we're copying the NN here from the blueprint (the class from model.py)
             
-        self.actor_target = copy.deepcopy(self.actor)
+        self.actor_target: torch.nn.Module = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
 
         self.critic = Critic(state_dim, action_dim).to(device)
@@ -57,26 +63,34 @@ class TD3:
         
         # [AMP] Initializes the Gradient Scaler. This acts as a digital shock-absorber that multiplies the AI's error
         # before backward propagation, preventing the tiny 16-bit decimals from crashing into 0.0 (underflowing) or reaching the limit and overflowing
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.device.type == 'cuda')
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.device.type == 'cuda')
 
         self.total_it = 0
 
     def select_action(self, state, state_history=None, action_history=None, return_attn=False):
         """Actor selects an action for a given state."""
-        if self.use_transformer:
+        if self.use_xlstm:
+            return self.actor.select_action(state, state_history, action_history, return_attn=return_attn)
+        elif self.use_transformer:
             # We use the actor's internal select_action to handle history-to-tensor conversion
             return self.actor.select_action(state, state_history, action_history, return_attn=return_attn)
         else:
             state = torch.FloatTensor(state.reshape(1, -1)).to(self.device) 
             return self.actor(state).cpu().data.numpy().flatten()
 
-    def train(self, replay_buffer, batch_size=256):
+    def train(self, replay_buffer, batch_size=256, step_schedulers=True):
         """Perform a single step of the TD3 training loop."""
         self.total_it += 1
 
+        # Initialize local variables to avoid unbound-name warnings
+        state_seq = None
+        action_seq = None
+        next_state_seq = None
+        next_action_seq = None
+
         # 1. Sample from the Replay Buffer
-        if self.use_transformer:
-            # Sequence sampling for the Transformer
+        if self.use_transformer or self.use_xlstm:
+            # Sequence sampling for the Transformer/xLSTM
             sample = replay_buffer.sample_sequence(batch_size, self.seq_len)
             if sample is None:
                 return # Not enough data to train yet
@@ -87,9 +101,9 @@ class TD3:
         with torch.no_grad():
             # [AMP] Intercepts heavy mathematical formulas here and dynamically shrinks the data
             # down to 16-bit to turbocharge computation speed on the GPU Tensor Cores.
-            with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
+            with torch.amp.autocast(device_type='cuda', enabled=self.device.type == 'cuda'):
                 # 2. Select next action with Target Policy Smoothing
-                if self.use_transformer:
+                if self.use_transformer or self.use_xlstm:
                     # Target actor uses the shifted history for the next step
                     next_action_prediction = self.actor_target(next_state_seq, next_action_seq)
                 else:
@@ -108,14 +122,16 @@ class TD3:
         
         # 4. Update Critics
         # [AMP] Automatically utilizes super-fast 16-bit math for calculating the Critic's error (loss).
-        with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
+        with torch.amp.autocast(device_type='cuda', enabled=self.device.type == 'cuda'):
             current_Q1, current_Q2 = self.critic(state, action)
             critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q) #mse = Mean Squared Error
 
         self.critic_optimizer.zero_grad() #Cleaning out the gradients so that the AI doesn't get confused from previous training cycles
         
         # [AMP] Scales the loss up by a massive factor safely so it doesn't break the float limits during backprop.
-        self.scaler.scale(critic_loss).backward() #Backprop, scaled for AMP
+        critic_loss_scaled = self.scaler.scale(critic_loss)
+        assert isinstance(critic_loss_scaled, torch.Tensor)
+        critic_loss_scaled.backward() #Backprop, scaled for AMP
         
         # [STABILITY] Unscale gradients before clipping to prevent spikes
         self.scaler.unscale_(self.critic_optimizer)
@@ -127,20 +143,25 @@ class TD3:
         # [AMP] Readjusts the multiplier shield up or down so future runs stay mathematically stable.
         self.scaler.update() #Update scaler multipliers
 
+        if step_schedulers:
+            self.critic_scheduler.step() #LR decay basically
+
         # 5. Delayed Policy Updates
         if self.total_it % self.policy_freq == 0:
             # Update Actor
-            # [AMP] Supercharges the Actor's Transformer sequence math using 16-bit precision.
-            with torch.cuda.amp.autocast(enabled=self.device.type == 'cuda'):
-                if self.use_transformer:
-                    # Transformer uses sequence context
+            # [AMP] Supercharges the Actor's sequence math using 16-bit precision.
+            with torch.amp.autocast(device_type='cuda', enabled=self.device.type == 'cuda'):
+                if self.use_transformer or self.use_xlstm:
+                    # Transformer/xLSTM uses sequence context
                     actor_loss = -self.critic.Q1(state, self.actor(state_seq, action_seq)).mean()
                 else:
                     actor_loss = -self.critic.Q1(state, self.actor(state)).mean() #We only need one critic here, .mean() because we're doing this over 256 cases, negative is there to
             self.actor_optimizer.zero_grad()                                      #trick GD into increasing the actor loss as much as it can so that it becomes more favourable
             
             # [AMP] Expands the Actor loss to stop it from underflowing (hitting zero).
-            self.scaler.scale(actor_loss).backward()
+            actor_loss_scaled = self.scaler.scale(actor_loss)
+            assert isinstance(actor_loss_scaled, torch.Tensor)
+            actor_loss_scaled.backward()
             
             # [STABILITY] Unscale gradients before clipping to prevent spikes
             self.scaler.unscale_(self.actor_optimizer)
@@ -151,6 +172,9 @@ class TD3:
             
             # [AMP] Automatically manages the internal 16-bit overflow thresholds for the Actor.
             self.scaler.update()
+
+            if step_schedulers:
+                self.actor_scheduler.step()
 
             #When we optimize, we aren't changing our Q score at all, we're just working around the optimization algos to ensure that they
             #understand that a more -ve loss translates into a higher Q values which translates into better actions

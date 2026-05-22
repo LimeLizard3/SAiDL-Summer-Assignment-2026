@@ -22,6 +22,8 @@ def train_rlhf(seed=0):
     torch.manual_seed(seed)
     np.random.seed(seed)
     
+    assert isinstance(env.observation_space, gym.spaces.Box)
+    assert isinstance(env.action_space, gym.spaces.Box)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
     max_action = float(env.action_space.high[0])
@@ -40,7 +42,7 @@ def train_rlhf(seed=0):
     
     # 2. Load the Jury (RewardEnsemble)
     reward_model = RewardEnsemble(state_dim, action_dim)
-    rlhf_trainer = RLHFTrainer(reward_model, device=device)
+    rlhf_trainer = RLHFTrainer(reward_model, device=str(device))
     
     # 3. Load the Expert Textbook (Teacher's Buffer)
     old_buffer = ReplayBuffer(state_dim, action_dim, device=device)
@@ -50,15 +52,15 @@ def train_rlhf(seed=0):
     new_buffer = ReplayBuffer(state_dim, action_dim, device=device)
     
     # 5. Pre-train the Jury on the Expert Textbook
-    if not os.path.exists("rlhf_jury_expert"):
+    if not os.path.exists("results_rlhf/rlhf_jury_expert"):
         print("Pre-training the Jury (RLHF Reward Model)... This may take a minute.")
         for i in range(5000):
             loss = rlhf_trainer.train_step(old_buffer, batch_size=64, segment_len=50)
             if (i+1) % 500 == 0:
                 print(f"Pre-train Iteration {i+1}/5000, Jury Loss: {loss:.4f}")
-        torch.save(reward_model.state_dict(), "rlhf_jury_expert")
+        torch.save(reward_model.state_dict(), "results_rlhf/rlhf_jury_expert")
     else:
-        reward_model.load_state_dict(torch.load("rlhf_jury_expert"))
+        reward_model.load_state_dict(torch.load("results_rlhf/rlhf_jury_expert"))
 
     # --- START TRAINING ---
     state, _ = env.reset(seed=seed)
@@ -70,7 +72,18 @@ def train_rlhf(seed=0):
     results_path = "results_rlhf/TD3_RLHF_S0.npy"
     os.makedirs("results_rlhf", exist_ok=True)
     
+    # Get max episode steps safely
+    max_episode_steps = getattr(env, "_max_episode_steps", None)
+    if max_episode_steps is None and hasattr(env, "spec") and env.spec is not None:
+        max_episode_steps = env.spec.max_episode_steps
+    if max_episode_steps is None:
+        max_episode_steps = 1000
+
     print(f"\n--- Starting Anchored RLHF Training (Seed={seed}) ---")
+
+    t = 0
+    terminated = False
+    truncated = False
 
     try:
         for t in range(int(3e5)):
@@ -89,21 +102,21 @@ def train_rlhf(seed=0):
 
             # Perform action
             next_state, env_reward, terminated, truncated, _ = env.step(action)
-            episode_reward += env_reward
+            episode_reward += float(env_reward)
 
             # --- THE RLHF SUBSTITUTION (With Safety Cap) ---
             # We clip the reward to prevent 'Reward Explosion' from breaking the agent
             raw_learned = reward_model.predict_reward(state_norm, action, method="min") * 50.0
             learned_reward = np.clip(raw_learned, -100, 100)
             
-            done_bool = float(terminated) if episode_timesteps < env._max_episode_steps else 0
+            done_bool = float(terminated) if episode_timesteps < max_episode_steps else 0.0
             new_buffer.add(state, action, next_state, learned_reward, done_bool)
             
             state = next_state
             
             # Training steps
             if t > 5000:
-                policy.train(new_buffer, batch_size=512)
+                policy.train(new_buffer, batch_size=512, step_schedulers=False)
                 
                 # Step the Schedulers every 1000 steps for the Lock-In
                 if t % 1000 == 0:
@@ -122,12 +135,12 @@ def train_rlhf(seed=0):
             if (t + 1) % 5000 == 0:
                 avg_reward = evaluate_policy(policy, "Hopper-v5", normalizer, seed)
                 evaluations.append(avg_reward)
-                np.save(results_path, evaluations)
+                np.save(os.path.splitext(results_path)[0], evaluations)
                 print(f"Time steps: {t+1}, Average Reward: {avg_reward:.2f}, Noise: {noise_scale:.4f}")
 
     except Exception as e:
         print(f"\n[CRITICAL ERROR] Training interrupted: {e}")
-        np.save(results_path, evaluations)
+        np.save(os.path.splitext(results_path)[0], evaluations)
         print(f"Progress saved to {results_path}. Last Evaluation: {evaluations[-1] if evaluations else 'N/A'}")
 
         if terminated or truncated:
@@ -158,7 +171,7 @@ def evaluate_policy(policy, env_name, normalizer, seed, eval_episodes=10):
                 torch.FloatTensor(np.zeros((1, 31, 3))).to(policy.device)
             ).cpu().data.numpy().flatten()
             state, reward, terminated, truncated, _ = eval_env.step(action)
-            avg_reward += reward
+            avg_reward += float(reward)
 
     avg_reward /= eval_episodes
     return avg_reward

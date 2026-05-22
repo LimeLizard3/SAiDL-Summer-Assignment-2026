@@ -10,7 +10,7 @@ import numpy as np
 from ad_model import ADTransformer
 from td3 import TD3 # for comparison if needed
 
-def evaluate_ad(model=None, model_path="ad_transformer.pth", env_name="Hopper-v4", num_episodes=10, seq_len=100):
+def evaluate_ad(model=None, model_path="models/ad_transformer.pth", env_name="Hopper-v4", num_episodes=10, seq_len=100):
     env = gym.make(env_name)
     assert isinstance(env.observation_space, spaces.Box)
     assert isinstance(env.action_space, spaces.Box)
@@ -87,7 +87,7 @@ def evaluate_ad(model=None, model_path="ad_transformer.pth", env_name="Hopper-v4
     return total_rewards
 
 if __name__ == "__main__":
-    if os.path.exists("ad_transformer.pth"):
+    if os.path.exists("models/ad_transformer.pth"):
         evaluate_ad()
     else:
         print("Model file not found. Please train the model first.")

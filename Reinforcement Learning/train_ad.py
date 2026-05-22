@@ -70,9 +70,20 @@ def train_ad():
             # Create dummy timesteps
             timesteps = torch.arange(seq_len).repeat(states.shape[0], 1).to(device)
             
+            # Apply Scheduled Action Masking to prevent Causal Confusion
+            p_mask = min(0.2 + 0.1 * epoch, 0.8)
+            mask = (torch.rand(actions.shape[:-1], device=device) > p_mask).unsqueeze(-1).float()
+            masked_actions = actions * mask #Getting action_dim back by broadcasting
+            
+            # Apply History Jitter as data augmentation to prevent overfitting
+            jittered_states = states + torch.randn_like(states) * 0.01
+            # Jitter only unmasked actions (preserve zeroed-out mask elements)
+            jittered_actions = masked_actions + (torch.randn_like(actions) * 0.005) * mask
+            jittered_rewards = rewards + torch.randn_like(rewards) * 0.01
+            
             # Predict actions (Forward Pass) with mixed precision autocast
             with autocast(): #AMP
-                pred_actions = model(states, actions, rewards, timesteps)
+                pred_actions = model(jittered_states, jittered_actions, jittered_rewards, timesteps)
                 # Loss: MSE between predicted actions and true actions (scaled by accumulation_steps)
                 loss = criterion(pred_actions, actions) / accumulation_steps
             
@@ -119,7 +130,7 @@ def train_ad():
         print(f"Epoch {epoch+1} finished | Avg Train Loss: {avg_train_loss:.6f} | Avg Val Loss: {avg_val_loss:.6f} | Avg Eval Reward: {avg_eval_reward:.2f}")
 
     # Save model
-    model_save_path = os.path.join(script_dir, "ad_transformer.pth")
+    model_save_path = os.path.join(script_dir, "models", "ad_transformer.pth")
     torch.save(model.state_dict(), model_save_path)
     print(f"Model saved to {model_save_path}")
 
