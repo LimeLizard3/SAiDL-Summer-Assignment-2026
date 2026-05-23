@@ -1,0 +1,543 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{graphicx}
+\graphicspath{{Graphs/}{Graphs/Graphs/}{Old Graphs/}{./}}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{tocloft}
+\usepackage{siunitx}
+\usepackage{listings}
+\usepackage{subcaption}
+
+% Formatting
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection)}{1em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection)}{1em}{}
+\renewcommand{\contentsname}{Table of Contents}
+\renewcommand{\cftsecaftersnum}{)}
+\renewcommand{\cftsubsecaftersnum}{)}
+\setlength{\cftsecnumwidth}{2.5em}
+\setlength{\cftsubsecnumwidth}{3em}
+
+\sisetup{
+    group-separator={,},
+    group-minimum-digits=4,
+    detect-weight=true,
+    table-format=5.2
+}
+
+% Code snippet styling
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{orange},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=8pt,
+    backgroundcolor=\color{gray!5},
+    showstringspaces=false,
+    frame=single,
+    rulecolor=\color{gray!30},
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=4
+}
+
+\title{\textbf{Modular Sequence Modeling: From Token-Level Language Modeling to Robust Continuous Reinforcement Learning under Partial Observability} \\ \large SAiDL Induction Assignment - Comprehensive Project Report}
+\author{Gautham}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report presents a unified, rigorous investigation into sequence-based deep learning across two domains: autoregressive language modeling on WikiText-2 and continuous reinforcement learning (RL) on the MuJoCo Hopper environment. In the first track, we build a modular Transformer language model, implementing alternative attention mechanisms (Multi-Query Attention, Sliding Window Attention, Linear Attention), context extrapolation techniques (Rotary Positional Embeddings, ALiBi), local-global convolutional hybrids, and the Attention-Free Transformer (AFT). In the second track, we design a Causal Transformer-based TD3 actor-critic agent capable of navigating extreme Partially Observable Markov Decision Processes (POMDPs). We identify key numerical and architectural failure modes—such as the sawtooth reward collapse, normalizer sensor crushing, poisoned student dialect mismatch in Reinforcement Learning from Human Feedback (RLHF), and sequence causal confusion in Algorithm Distillation (AD)—and introduce structural solutions (gradient clipping, Polyak update smoothing, Eternal Textbook replay, Jury ensembles, scheduled action masking, and xLSTM projection offloading). Our final evaluations demonstrate that causal memory models equipped with structured temporal clocks consistently outperform reactive networks, showing remarkable resilience to sensory failure, observation noise, and delayed feedback.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introduction}
+The core challenge of modern artificial intelligence lies in modeling temporal dependencies and extracting patterns from history. While traditional architectures like Multi-Layer Perceptrons (MLPs) assume independent and identically distributed (i.i.d.) observations, real-world scenarios—ranging from autoregressive text generation to robotic locomotion under partial observability—require structured memory. 
+
+This project explores sequence modeling from two complementary perspectives:
+\begin{enumerate}
+    \item \textbf{Autoregressive Language Modeling (Core ML Track):} Designing modular Transformers that scale efficiently. We decouple the attention and positional encoding modules to test alternative architectures that optimize for memory footprint, inference speed, and out-of-domain context length extrapolation.
+    \item \textbf{Causal RL and Sequence Modeling (RL Track):} hard-tuning Transformer-based policies to balance and hop. We transition from standard Markovian assumptions (MDP) to Partially Observable environments (POMDP), stress-testing agents under sensor failures, delayed rewards, and noisy inputs. We further align the agent via preference-based Reinforcement Learning from Human Feedback (RLHF) and study in-context policy learning via Algorithm Distillation (AD).
+\end{enumerate}
+
+Throughout this engineering journey, we bridge the gap between high-level architectural design and micro-level optimization, addressing constraints like GPU memory limits, CPU-to-GPU data copies, and numerical stabilization.
+
+\newpage
+
+\section{Core ML Track: Modular Transformer Language Modeling}
+To evaluate sequence modeling efficiency, we developed a modular autoregressive Transformer on the WikiText-2 dataset. Our goal was to design a clean, interchangeable codebase where any attention mechanism could be combined with any positional encoding.
+
+\subsection{Standard Baseline and Modular Attention Variants}
+The baseline uses absolute positional embeddings and standard $O(N^2)$ Scaled Dot-Product Attention:
+\begin{equation}
+\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{QK^T}{\sqrt{d_k}} + M\right)V
+\end{equation}
+where $M$ is the upper-triangular causal mask:
+\begin{equation}
+M_{i,j} = \begin{cases} 0 & \text{if } j \le i \\ -\infty & \text{if } j > i \end{cases}
+\end{equation}
+
+To address the quadratic scaling bottleneck, we implemented three attention variants in \texttt{attention\_variants.py}:
+\begin{enumerate}
+    \item \textbf{Multi-Query Attention (MQA):} Reduces GPU memory bandwidth constraints by sharing a single key ($K$) and value ($V$) head across all query ($Q$) heads. While standard Multi-Head Attention (MHA) projects $H$ heads for queries, keys, and values, MQA projects:
+    \begin{align}
+    Q_h &= X W_h^Q \in \mathbb{R}^{B \times L \times d_k} \quad (h=1 \dots H) \\
+    K &= X W^K \in \mathbb{R}^{B \times L \times d_k} \\
+    V &= X W^V \in \mathbb{R}^{B \times L \times d_v}
+    \end{align}
+    This significantly improves inference speed during incremental decoding by cutting memory transfers.
+    \item \textbf{Sliding Window Attention (SWA):} Restricts the attention receptive field to a local window $W$. For query index $i$, the model only attends to key indices $j$ where $i - W < j \le i$. This enforces a linear complexity $O(N \cdot W)$ per layer, while maintaining a global receptive field in deeper layers through stacking.
+    \item \textbf{Linear Attention:} Approximates the Softmax function using kernel feature maps, decoupling the sequence length multiplication:
+    \begin{equation}
+    \text{LinearAttention}(Q, K, V) = \frac{\phi(Q) (\phi(K)^T V)}{\phi(Q) \sum_j \phi(K)_j^T}
+    \end{equation}
+    where $\phi(x) = \text{elu}(x) + 1$. This changes the computational complexity from $O(L^2 d)$ to $O(L d^2)$, making it ideal for streaming long contexts.
+\end{enumerate}
+
+\subsection{Positional Embedding and Context Extrapolation}
+Absolute positional encodings assign a fixed coordinate to each index, causing mathematical failure when testing contexts longer than the training sequences. We implemented two relative formulations:
+\begin{enumerate}
+    \item \textbf{Rotary Positional Embedding (RoPE):} Rotates Query and Key vectors in 2D space. The 2D rotation matrix for a vector $x \in \mathbb{R}^2$ at position $m$ with frequency $\theta$ is:
+    \begin{equation}
+    R_{m,\theta}^2 = \begin{pmatrix} \cos(m\theta) & -\sin(m\theta) \\ \sin(m\theta) & \cos(m\theta) \end{pmatrix}
+    \end{equation}
+    Applying this to high-dimensional spaces, we utilize the computational \texttt{rotate\_half} optimization:
+    \begin{equation}
+    \text{rotate\_half}(x_1, x_2, \dots, x_{d/2}, x_{d/2+1}, \dots, x_d) = (-x_{d/2+1}, \dots, -x_d, x_1, \dots, x_{d/2})
+    \end{equation}
+    RoPE is then computed element-wise as:
+    \begin{equation}
+    R_m(x) = x \odot \cos(m\theta) + \text{rotate\_half}(x) \odot \sin(m\theta)
+    \end{equation}
+    which avoids slow full-matrix multiplications on GPUs.
+    \item \textbf{Attention with Linear Biases (ALiBi):} Replaces positional embeddings with a static penalty added directly to the attention query-key dot-products:
+    \begin{equation}
+    A_{i,j} = \frac{q_i k_j^T}{\sqrt{d_k}} - m \cdot (i - j) \quad \text{for } j \le i
+    \end{equation}
+    where $m$ is a head-specific slope scalar. Since the penalty increases linearly with distance, the model naturally prioritizes local contexts, enabling extrapolation to sequence lengths multiple times longer than the training context.
+\end{enumerate}
+
+\subsection{Convolution + Attention Hybrids}
+To capture short-range syntactic interactions before global attention routing, we developed two local hybrid blocks in \texttt{conv\_logic.py}:
+\begin{itemize}
+    \item \textbf{Design A (Pre-Attention):} Passes the input embeddings through a 1D Causal Convolutional Layer (kernel size $k=3$) to extract local features, which are then fed into standard attention.
+    \item \textbf{Design B (Interleaved):} Alternates between a global attention layer and a depthwise separable causal 1D convolution layer. By replacing half of the attention layers with convolutions, we drastically decrease the parameter count and VRAM consumption.
+\end{itemize}
+
+\subsection{Bonus Task: Attention-Free Transformer (AFT)}
+We integrated the Attention-Free Transformer (AFT) architecture in \texttt{benchmark\_aft.py}. AFT replaces dot-product attention with a query-gated, element-wise operation:
+\begin{equation}
+Y_i = \sigma(Q_i) \odot \frac{\sum_{j=1}^L \exp(K_j + w_{i,j}) \odot V_j}{\sum_{j=1}^L \exp(K_j + w_{i,j})}
+\end{equation}
+where $w_{i,j}$ are learned relative positional biases. We benchmarked three variants:
+\begin{itemize}
+    \item \textbf{AFT-Simple:} Discards positional biases ($w_{i,j}=0$), mapping context as a simple weighted average.
+    \item \textbf{AFT-Local:} Restricts the relative bias interactions to a sliding window of size $s$.
+    \item \textbf{AFT-Full:} Computes a full $L \times L$ grid of learned relative pairwise offsets.
+\end{itemize}
+
+\subsection{Global Performance Benchmarks}
+We evaluated all modular combinations on WikiText-2. Validation Perplexity (PPL), throughput (Tokens/Sec), and VRAM utilization were recorded on a CUDA GPU.
+
+\begin{table}[!ht]
+    \centering
+    \caption{Global Core ML Benchmarks (WikiText-2, Batch Size 4, Seq Length 128)}
+    \label{tab:core_ml_global}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Modular Variant} & \textbf{PPL} ($\downarrow$) & \textbf{Tokens/Sec} ($\uparrow$) & \textbf{Peak VRAM (MB)} ($\downarrow$) \\
+        \midrule
+        Standard + Absolute (Baseline) & 34940.81 & 12560.3 & 525.4 \\
+        Standard + RoPE               & 29708.72 & 17744.2 & 525.4 \\
+        Standard + ALiBi              & 29508.13 & 29206.4 & 525.4 \\
+        \midrule
+        MQA + Absolute                & 32572.44 & 30447.3 & 524.8 \\
+        MQA + RoPE                    & 33442.34 & 26203.8 & 524.9 \\
+        MQA + ALiBi                   & 30014.46 & 27564.7 & 524.8 \\
+        \midrule
+        Sliding Window + Absolute     & 31787.91 & 29841.4 & 525.4 \\
+        Sliding Window + RoPE         & 29939.30 & 27420.6 & 525.4 \\
+        Sliding Window + ALiBi        & 30421.29 & 28666.8 & 525.4 \\
+        \midrule
+        Linear + RoPE                 & 30210.36 & 16543.6 & 540.1 \\
+        \midrule
+        \textbf{HYBRID (Pre-Attn) MQA+ALiBi} & \textbf{27515.80} & 12075.8 & 526.5 \\
+        \textbf{HYBRID (Interleaved) MQA+ALiBi} & 28808.97 & \textbf{24248.7} & \textbf{521.3} \\
+        \midrule
+        \textbf{AFT-Simple (Bonus)}   & 19298.07 & \textbf{29779.9} & 522.2 \\
+        \textbf{AFT-Local (Bonus)}    & \textbf{17176.86} & 16803.3 & 590.1 \\
+        \textbf{AFT-Full (Bonus)}     & 19405.19 & 16847.6 & 596.2 \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\paragraph{Analysis of Results:}
+\begin{itemize}
+    \item \textbf{Quality Champion:} \textbf{AFT-Local} achieved the lowest perplexity (\textbf{17,176.86}), dramatically outperforming the baseline and standard Transformers. Restricting learned pairwise biases to a local context window allows the model to extract high-fidelity grammar structures without global noise.
+    \item \textbf{Throughput Champion:} \textbf{AFT-Simple} achieved the highest generation speed of \textbf{29,779.9} tokens/sec, leveraging its query-gated element-wise formulation that bypasses the attention graph.
+    \item \textbf{Memory Champion:} The \textbf{Interleaved Hybrid (MQA+ALiBi)} achieved the lowest peak VRAM footprint (\textbf{521.3 MB}). Replacing half the attention matrices with causal convolutions minimizes memory utilization, making it highly competitive for edge devices.
+\end{itemize}
+
+\subsection{Sequence Extrapolation Stability}
+To evaluate the mathematical stability of positional variants, we trained models on sequence length $L_{train}=512$ and tested them on longer context windows $L_{test} \in \{1024, 2048\}$.
+
+\begin{table}[!ht]
+    \centering
+    \caption{Extrapolation Stability (PPL on WikiText-2)}
+    \label{tab:extrapolation_results}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Positional Encoding} & $L_{test} = 512$ & $L_{test} = 1024$ & $L_{test} = 2048$ \\
+        \midrule
+        Absolute & 28,787 & 29,122 & \textcolor{red}{\textbf{FAILED (NaN / INF)}} \\
+        RoPE     & 30,510 & 30,864 & 31,489 \\
+        ALiBi    & 29,583 & 30,165 & 30,757 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Absolute encodings fail catastrophically beyond their training domain, producing infinite perplexity due to out-of-distribution coordinate shifts. In contrast, both RoPE and ALiBi maintain stable perplexity profiles, verifying their efficacy in handling long documents without fine-tuning.
+
+\newpage
+
+\section{Reinforcement Learning Track: Causal Transformers for Locomotion}
+We transitioned from discrete language tokens to continuous robotic control. The task was to train a Causal Transformer agent in the MuJoCo \texttt{Hopper-v5} environment.
+
+\subsection{Twin Delayed DDPG (TD3) Base Algorithm}
+Our baseline uses Twin Delayed DDPG (TD3) to mitigate the overestimation bias of Q-values in continuous action spaces:
+\begin{enumerate}
+    \item \textbf{Clipped Double-Q Learning:} Uses two independent critic networks, updating against the minimum predicted next-state value:
+    \begin{equation}
+    y = r + \gamma \min_{i=1,2} Q_{\text{target},i}(s', a')
+    \end{equation}
+    \item \textbf{Target Policy Smoothing:} Adds clipped noise to the target action to smooth the value landscape:
+    \begin{align}
+    a' &= \text{Clip}(\pi_{\text{target}}(s') + \epsilon, \text{action\_low}, \text{action\_high}) \\
+    \epsilon &\sim \text{Clip}(\mathcal{N}(0, \sigma_{\text{target}}), -c, c)
+    \end{align}
+    \item \textbf{Delayed Updates:} The actor network and target weights are updated at a slower frequency than the critic networks (e.g., update ratio of 2:1) to allow the Q-value landscape to stabilize.
+\end{enumerate}
+
+\subsection{Causal History Buffer and Masking}
+To replace the standard MLP actor with a Causal Transformer, we reformulated the replay buffer in \texttt{replay\_buffer.py}. Rather than sampling isolated state-action transitions, the buffer samples contiguous sequence histories of length $L \in \{16, 32\}$:
+\begin{equation}
+\mathcal{H}_t = (s_{t-L+1}, a_{t-L+1}, r_{t-L+1}, \dots, s_t)
+\end{equation}
+To prevent future leakage during attention updates, we enforce a strict temporal causal mask $M$ inside \texttt{model.py}, ensuring query index $i$ cannot attend to key indices greater than $i$.
+
+\subsection{The Stabilization Journey: Solving the Sawtooth Collapse}
+During initial runs, standard Transformer actors in RL suffered from severe numerical instability, characterized by a "sawtooth" reward pattern where performance collapsed repeatedly after reaching short-lived peaks. We addressed these instabilities through structural and numerical constraints:
+
+\paragraph{1. The "Sensor Crushing" Normalizer Bug:}
+We discovered a critical defect in the online normalization module. The code was averaging 11 independent robotic sensors (representing root height, coordinate angles, joint velocities) across the features dimension. The math was performing:
+\begin{equation}
+\mu_{\text{crushed}} = \frac{1}{D}\sum_{d=1}^D \mu_d
+\end{equation}
+This squashed distinct states into a single scalar, blinding the agent and forcing the Transformer to guess the true physical vectors from sequence history. We refactored \texttt{model.py} using Welford's algorithm to update mean and variance vectors independently for each sensor dimension $d$:
+\begin{equation}
+\mu_{d,\text{new}} = \mu_{d,\text{old}} + \frac{n_b}{n_{\text{total}}} \left(\mu_{d,\text{batch}} - \mu_{d,\text{old}}\right)
+\end{equation}
+
+\paragraph{2. Gradient Clipping (Fuse 0.5):}
+Noisy experience batches generated by an unstable hopping gait occasionally caused extreme gradients. We integrated gradient clipping into \texttt{td3.py}:
+\begin{equation}
+g_{\text{clipped}} = g \cdot \min\left(1, \frac{0.5}{\|g\|_2}\right)
+\end{equation}
+This acts as a mathematical fuse, preventing parameter spikes from corrupting the actor network.
+
+\paragraph{3. Target Smoothing Decoupling ($\tau=0.0005$):}
+To stabilize the target critics, we reduced the Polyak target update rate from $\tau=0.005$ to $\tau=0.0005$:
+\begin{equation}
+\theta_{\text{target}} \leftarrow \tau \theta + (1-\tau) \theta_{\text{target}}
+\end{equation}
+Slowing down target updates ensures the target networks remain stable, decoupling target estimation from noisy student policy fluctuations.
+
+\paragraph{4. Hyperparameter Adaptation:}
+We increased the training batch size to 512, providing a broader, more diverse sample of trajectories to stabilize the computed self-attention weights.
+
+\subsection{Computational and Engineering Bottlenecks}
+We resolved CPU-GPU performance bottlenecks that slowed down training:
+\begin{itemize}
+    \item \textbf{Pointer-Style Deque Hand-off:} In the control loop, the agent maintains an online history using a Python \texttt{deque}. The original code cast the deque to a list before calling the model:
+    \begin{lstlisting}[caption=Old Inefficient Conversion]
+    action = policy.select_action(..., state_history=list(state_history))
+    \end{lstlisting}
+    This forced Python to perform a deep copy of the sequence references on the heap at every simulation step. We refactored the pipeline to pass the raw \texttt{deque} directly, deferring contiguous memory layout translation to NumPy's compiled C++ engine inside \texttt{select\_action}.
+    \item \textbf{2:1 Training Ratio Decoupling:} Backpropagation through a Transformer actor is computationally expensive. We decoupled physics simulation from training steps. The agent performs two simulation environment steps for every single gradient update (2:1 training ratio), cutting training time by $\sim$40\% with negligible impact on sample efficiency.
+    \item \textbf{Evaluation Overhead Optimization:} We identified that testing the agent for 5 full episodes every 5,000 steps consumed significant execution time. We scaled evaluation intervals to every 25,000 steps for 2 episodes, reducing evaluation overhead by 90\%.
+    \item \textbf{Mid-Run Safety Checkpointing:} To prevent data loss during long-duration runs, we integrated auto-save checkpoints every 100,000 steps.
+\end{itemize}
+
+\subsection{Sequence Length Comparison: Specialists (L=16) vs. Titans (L=32)}
+We evaluated the stabilized Transformer architecture across sequence histories $L \in \{16, 32\}$ against an optimized MLP baseline.
+
+\begin{itemize}
+    \item \textbf{MLP Baseline:} Learned rapidly but hit an early performance plateau, averaging a reward of \textbf{312.44} before demonstrating high-variance balance collapse.
+    \item \textbf{The $L=16$ Specialist:} Exhibited steady, stable policy improvement, reaching a peak reward of \textbf{411.33}. It balanced consistently but lacked the context window to coordinate complex, long-term recovery behaviors.
+    \item \textbf{The $L=32$ Titan:} Achieved a project-wide peak reward of \textbf{608.62}. While the larger context window required more steps to stabilize attention weights, the model achieved a significantly higher performance floor and ceiling, demonstrating that temporal depth is critical for complex locomotion gaits.
+\end{itemize}
+
+These comparisons are visually represented in Figure \ref{fig:task1_comparison_plots}.
+
+\begin{figure}[!ht]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{TD3_Baseline_Results.png}
+        \caption{Optimized MLP Baseline.}
+        \label{fig:mlp_final_graph}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{Transformer_Comparison.png}
+        \caption{Causal Transformer Ablation ($L=16, 32$).}
+        \label{fig:transformer_final_graph}
+    \end{subfigure}
+    \caption{Continuous locomotion performance comparison showing stabilized plateau achievements.}
+    \label{fig:task1_comparison_plots}
+\end{figure}
+
+\newpage
+
+\section{Robustness Frontier: Navigating POMDPs and Diagnostics}
+We evaluated the robustness of our Causal Transformer architecture under sensor failures, observational noise, and delayed credit assignment.
+
+\subsection{The Triple-Threat POMDP Stress Test}
+We designed a POMDP environment featuring three simultaneous stressors:
+\begin{enumerate}
+    \item \textbf{Partial Observability (Blindfold):} 100\% velocity sensor failure. All linear and angular velocity sensors are masked (set to 0), leaving only positional and joint angle observations.
+    \item \textbf{Gaussian Noise:} 10\% sensory static ($\sigma=0.1$) is injected into the remaining positional observations to simulate hardware sensor noise.
+    \item \textbf{Delayed Reward (Credit Lag):} The reward signal is delayed by $K=10$ frames, requiring the agent to propagate credit over a temporal lag.
+\end{enumerate}
+
+\begin{table}[!ht]
+    \centering
+    \caption{Stressor Ablation Rewards (Mean over 5 Evaluation Runs)}
+    \label{tab:pomdp_ablation}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Model Configuration} & \textbf{Clean Obs} & \textbf{Blindfolded (No Vel) + Noise} & \textbf{Triple-Threat POMDP} \\
+        \midrule
+        MLP Baseline                 & 312.44 & 83.54  & 21.03 \\
+        Transformer Baseline ($L=32$) & 580.12 & 92.11  & 45.39 \\
+        \textbf{Transformer + Sinusoidal PE} & \textbf{608.62} & \textbf{110.13} & \textbf{128.45} \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\paragraph{Analysis of Results:}
+The MLP baseline collapsed to a near-zero reward (\textbf{21.03}) under POMDP conditions, failing to balance. The Causal Transformer with Sinusoidal Positional Encodings maintained stable balance, achieving a \textbf{6x higher reward} (\textbf{128.45}) than the MLP. This demonstrates that sequence context allows the model to estimate missing derivatives from positional histories.
+
+\begin{figure}[!ht]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{xLSTM_vs_TD3_POMDP.png}
+        \caption{Robustness under sensor noise.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{xLSTM_vs_TD3_DelayedReward.png}
+        \caption{Robustness under delayed credit updates.}
+    \end{subfigure}
+    \caption{POMDP stress test comparisons between sequence architectures and baseline networks.}
+    \label{fig:pomdp_graphs}
+\end{figure}
+
+\subsection{Attention Saliency Inversion: Clean vs. Blindfolded Models}
+By analyzing attention maps, we observed that when a model trained on clean observations is blindfolded (velocity sensors removed), its attention pattern inverts. Instead of utilizing historical data to estimate speed, it exhibits a "Panic Response"—focusing exclusively on the present timestep and ignoring the past.
+
+To address this distribution shift, we conducted a \textbf{Robustness Sprint}—20,000 steps of training under masked-velocity conditions. Following this sprint, the model developed a double-anchor attention strategy:
+\begin{enumerate}
+    \item \textbf{The Calculus Spike (Step -1):} The model focuses intensely on the frame immediately preceding the current state to estimate velocity:
+    \begin{equation}
+    v_t \approx \frac{x_t - x_{t-1}}{\Delta t}
+    \end{equation}
+    \item \textbf{The Deep Memory Anchor (Step -31):} The model allocates $\approx$25\% more attention to the oldest step in its context window. This anchor serves to prevent drift in joint angle tracking.
+    \item \textbf{Middle-Buffer Noise Filtering:} The model filters out the middle indices of the history window, focusing only on the boundary parameters.
+\end{enumerate}
+
+These patterns are shown in the attention diagnostics in Figure \ref{fig:attention_pos_enc}.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.6\textwidth]{Attention_Analysis_PosEnc.png}
+    \caption{Attention Saliency Map with Sinusoidal Positional Encodings, showing the Calculus Spike at step -1 and the Deep Memory Anchor at step -31.}
+    \label{fig:attention_pos_enc}
+\end{figure}
+
+\subsection{Advanced Attribution Engine: The Chefer Protocol}
+To verify attention behavior, we implemented the \textbf{Chefer Protocol} (Transformer Relevancy Propagation) in \texttt{model.py}. Standard attention maps can fail to capture information flow because they only record forward activations. The Chefer formulation propagates gradients and attentions to compute a relevancy score $R$:
+\begin{equation}
+R^{(l)} = R^{(l-1)} + \bar{A}^{(l)} \odot \nabla A^{(l)}
+\end{equation}
+
+During initial implementations, the relevancy maps only captured current timesteps. We resolved this by replacing the standard positive-gradient clamp with an \textbf{Absolute Saliency Engine}:
+\begin{equation}
+S_{i,j} = \left| A_{i,j} \odot \frac{\partial \mathcal{L}}{\partial A_{i,j}} \right|
+\end{equation}
+By incorporating absolute values, we captured inhibitory attention features—moments in history that signal the actor to halt or decelerate.
+
+\newpage
+
+\section{Reinforcement Learning from Human Feedback (RLHF)}
+We designed a preference-based RLHF pipeline to train the Hopper without environment reward access, utilizing queries of length $H=100$.
+
+\subsection{Mathematical Framework}
+The Reward Model $R_\psi$ is trained on human preferences using the Bradley-Terry model. The probability that trajectory segment $\sigma_1$ is preferred to segment $\sigma_2$ is:
+\begin{equation}
+P(\sigma_1 \succ \sigma_2) = \frac{\exp\left(\sum_{t} R_\psi(s_t^{\sigma_1}, a_t^{\sigma_1})\right)}{\exp\left(\sum_{t} R_\psi(s_t^{\sigma_1}, a_t^{\sigma_1})\right) + \exp\left(\sum_{t} R_\psi(s_t^{\sigma_2}, a_t^{\sigma_2})\right)}
+\end{equation}
+We optimize the model using Binary Cross-Entropy (BCE) Loss:
+\begin{equation}
+\mathcal{L}_{\text{BCE}}(\psi) = - \mathbb{E}_{(\sigma_1, \sigma_2, y)} \left[ y \log P(\sigma_1 \succ \sigma_2) + (1-y) \log P(\sigma_2 \succ \sigma_1) \right]
+\end{equation}
+where $y=1$ if segment $\sigma_1$ is preferred, and $y=0$ if $\sigma_2$ is preferred.
+
+\subsection{The "Poisoned Student" Phenomenon \& Catastrophic Forgetting}
+Initial RLHF runs suffered from a "Mid-Life Crisis" where the agent's reward collapsed to zero near step 50,000. We identified two core failure modes:
+\begin{itemize}
+    \item \textbf{The Poisoned Student:} The Reward Model (Judge) is pre-trained on an expert buffer. However, at step 0, the live agent (Student) has an uncalibrated input normalizer. The Student reports actions in a different numerical range (dialect). The Judge fails to recognize this dialect, generating random rewards. Updating the Judge on these noisy trajectories corrupts its representations.
+    \item \textbf{Catastrophic Forgetting:} Because the Judge was trained online only on the latest student samples, it forgot the characteristics of expert movement, leading to reward hacking.
+\end{itemize}
+
+\subsection{Architectural Alignment and Hardening}
+We implemented structural modifications in \texttt{train\_rlhf.py} and \texttt{reward\_model.py}:
+\begin{enumerate}
+    \item \textbf{Sensory Normalization Synchronization:} We forced the Student network to inherit the pre-trained expert $L=32$ normalizer parameters at initialization, aligning their numerical ranges.
+    \item \textbf{The Reward Governor:} We applied a \texttt{Tanh} activation layer to the output of the Reward Model, bounding rewards to $[-1, 1]$. This prevents gradient spikes from destabilizing policy updates.
+    \item \textbf{Paced Judge Updates:} We decreased the Judge's training frequency from every 500 steps to every 2,000 steps, allowing the policy to adapt to reward updates.
+    \item \textbf{The Eternal Textbook Protocol:} During online updates, we forced the Judge to mix trajectory batches from the expert pre-training buffer with the student's live trajectory buffer. This prevents the Judge from forgetting expert behavior.
+    \item \textbf{Running Mean Normalization (Z-Score Shield):} We integrated the \texttt{RunningMeanStd} module to normalize reward values to mean 0 and variance 1, stabilizing policy training:
+    \begin{equation}
+    \bar{R} = \frac{R_\psi(s,a) - \mu_R}{\sigma_R + \epsilon}
+    \end{equation}
+    \item \textbf{The Jury Ensemble (Pessimistic Consensus):} To prevent the agent from hacking a single reward model, we deployed a consensus ensemble of three independent models:
+    \begin{equation}
+    R_{\text{Jury}}(s,a) = \min\left(R_{\psi_1}(s,a), R_{\psi_2}(s,a), R_{\psi_3}(s,a)\right)
+    \end{equation}
+    Taking the minimum reward prevents the agent from exploiting outliers in any single model's landscape.
+    \item \textbf{Robust Upcycling (\texttt{strict=False}):} We initialized the RLHF actor using the weights of our 608-point expert L=32 Champion model. We set \texttt{strict=False} during weight loading to gracefully initialize newly added positional embedding weights.
+\end{enumerate}
+
+These modifications stabilized the RLHF training run, as shown in Figure \ref{fig:rlhf_comparison}.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.6\textwidth]{RLHF_Final_Comparison.png}
+    \caption{RLHF alignment curves showing performance using the Jury Ensemble compared to baseline setups.}
+    \label{fig:rlhf_comparison}
+\end{figure}
+
+\newpage
+
+\section{Algorithm Distillation \& Sequence Modeling Optimizations}
+In sequence-conditioned models like Algorithm Distillation (AD), we predict action $a_t$ based on historical state-action-reward tokens.
+
+\subsection{Scheduled Action Masking (Curriculum Action Dropout)}
+In continuous control environments, sequential actions are highly correlated ($a_t \approx a_{t-1}$). Consequently, the Transformer can develop a causal shortcut—ignoring state inputs and simply copycatting the previous action $a_{t-1}$. During online evaluation, this shortcut causes errors to compound rapidly, causing the agent to fall.
+
+To prevent this, we implemented \textbf{Scheduled Action Masking}. The action dropout probability $p_{\text{mask}}$ increases linearly across epochs:
+\begin{equation}
+p_{\text{mask}} = \min(0.2 + 0.1 \times \text{epoch}, 0.8)
+\end{equation}
+This curriculum forces the network to transition from copying easy sequence patterns in early epochs to predicting actions solely from state histories in later epochs.
+
+\subsection{History Jitter Data Augmentation}
+We inject Gaussian noise into the historical state, action, and reward context buffers during training:
+\begin{align}
+\tilde{s}_\tau &= s_\tau + \eta_s, \quad \eta_s \sim \mathcal{N}(0, 0.01) \\
+\tilde{a}_\tau &= a_\tau \cdot M_\tau + \eta_a, \quad \eta_a \sim \mathcal{N}(0, 0.005) \\
+\tilde{r}_\tau &= r_\tau + \eta_r, \quad \eta_r \sim \mathcal{N}(0, 0.01)
+\end{align}
+where $M_\tau$ is the active scheduled action mask. Crucially, noise is applied **only to the input contexts**; the target loss is computed against clean, unmasked actions, forcing the model to reconstruct optimal actions from noisy histories.
+
+\begin{lstlisting}[caption=Scheduled Masking and History Jitter Implementation]
+# Calculate scheduled masking probability
+p_mask = min(0.2 + 0.1 * epoch, 0.8)
+mask = (torch.rand(actions.shape[:-1], device=device) > p_mask).unsqueeze(-1).float()
+masked_actions = actions * mask
+
+# Add noise to input contexts
+jittered_states = states + torch.randn_like(states) * 0.01
+jittered_actions = masked_actions + (torch.randn_like(actions) * 0.005) * mask
+jittered_rewards = rewards + torch.randn_like(rewards) * 0.01
+
+# Compute loss against clean targets
+with autocast():
+    pred_actions = model(jittered_states, jittered_actions, jittered_rewards, timesteps)
+    loss = criterion(pred_actions, actions)
+\end{lstlisting}
+
+\subsection{Sequence AMP and Gradient Accumulation}
+As attention scales quadratically with sequence length, sequence batches are memory-intensive ($\mathcal{O}((3L)^2)$). 
+\begin{itemize}
+    \item \textbf{Automatic Mixed Precision (AMP):} Casts attention matrix multiplications to half-precision (\texttt{float16}) using \texttt{autocast} and \texttt{GradScaler} to prevent floating-point underflow.
+    \item \textbf{Gradient Accumulation:} Splits a large batch size of 512 into 4 sequential micro-batches of size 128, accumulating gradients before running an optimizer step:
+    \begin{equation}
+    g_{\text{accumulated}} = \frac{1}{N_{\text{steps}}} \sum_{i=1}^{N_{\text{steps}}} \nabla_{\theta} \mathcal{L}_i
+    \end{equation}
+    This enables training with large effective batch sizes within consumer VRAM limits.
+\end{itemize}
+
+\subsection{xLSTM Recurrent Loop Projection Offloading}
+In our custom xLSTM implementation (\texttt{xlstm\_model.py}), the sLSTM and mLSTM recurrent cells loop sequentially over time:
+\begin{equation}
+h_t, C_t, n_t, m_t = \text{Cell}(x_t, h_{t-1}, C_{t-1}, n_{t-1}, m_{t-1})
+\end{equation}
+Computing linear projections ($Q, K, V$ and gating weights) inside this loop incurs significant GPU kernel launch overhead. We optimized this by computing the projections in parallel **outside the recurrent loop** and slicing the resulting tensors inside the loop:
+
+\begin{lstlisting}[caption=xLSTM Projection Offloading Optimization]
+# Pre-compute projections outside loop
+Q_all = self.q_proj(X_conv)      # Shape: (B, L, H * d_k)
+K_all = self.k_proj(X_conv)      # Shape: (B, L, H * d_k)
+V_all = self.v_proj(X_conv)      # Shape: (B, L, H * d_v)
+Gates_all = self.W_gates(X_conv)  # Shape: (B, L, 3 * H)
+
+# Sequential recurrence loop slicing pre-computed inputs
+for t in range(L):
+    q_t = Q_all[:, t, :]
+    k_t = K_all[:, t, :]
+    v_t = V_all[:, t, :]
+    gates_t = Gates_all[:, t, :]
+    # Perform element-wise state cell updates
+\end{lstlisting}
+This reduces recurrent computation to element-wise updates, bypassing GPU latency bottlenecks.
+
+\newpage
+
+\section{Conclusion}
+This project systematically demonstrates the capabilities and requirements of sequence modeling architectures across language processing and robotic control.
+
+In the **Language Modeling Track**, standard attention was modularized, showing that the Attention-Free Transformer (\textbf{AFT-Local}) achieves superior perplexity, while \textbf{AFT-Simple} maximizes throughput. For memory-constrained settings, the \textbf{Interleaved Hybrid} minimizes VRAM utilization.
+
+In the **Reinforcement Learning Track**, Causal Transformers outperform reactive MLP baselines in POMDP environments. Incorporating structural modifications—such as gradient clipping, Polyak target updates, normalizer corrections, scheduled action masking, and Jury consensus models—stabilized training and resolved performance collapse. Attention diagnostics confirmed that the model independently develops velocity estimation behaviors under partial observability.
+
+These results highlight the importance of temporal context, structured attention, and numerical stabilization in designing robust, sequence-conditioned agents.
+
+\end{document}

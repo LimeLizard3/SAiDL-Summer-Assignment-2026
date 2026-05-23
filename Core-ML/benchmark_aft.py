@@ -8,34 +8,36 @@ from model import TransformerLM  # type: ignore
 from data import get_dataloaders
 
 def get_gpu_memory():
+    """
+    Returns current peak GPU memory allocated in Megabytes (MB).
+    """
     if torch.cuda.is_available():
-        return torch.cuda.max_memory_allocated() / 1e6  # MB
+        return torch.cuda.max_memory_allocated() / 1e6
     return 0
 
 def evaluate_config(config, device, train_loader, val_loader):
-    torch.cuda.reset_peak_memory_stats() #Fresh memory without any past influence
+    """
+    Runs training steps to measure throughput/memory, followed by validation steps to measure perplexity.
+    """
+    # Reset peak memory counter for clean isolated profiling
+    torch.cuda.reset_peak_memory_stats()
+    # Instantiate modular transformer from configuration
     model = TransformerLM(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     
-    # Warmup 
+    # Warmup loop: compiles operations and populates CUDA cache prior to measurement
     model.train()
     for i, (x, y) in enumerate(train_loader):
         if i >= 5: break
         x, y = x.to(device), y.to(device)
         logits = model(x)
+        # Flatten logits to [batch_size * seq_len, vocab_size] and targets to [batch_size * seq_len] for cross-entropy
         loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
-        #First .view() rearranges 3D grid into a 2D grid
-        #-1 is a wildcard: "I don't wanna do the math, figure out how many rows this should be",
-        #PyTorch responds by smashing the Batch & Sequence dimensions together into 1 long vertial list
-        #logits.size(-1) asks for the very last dimension (Vocab size). Forces 2D grid to have exactly enough
-        #columns for every word
-        #y.view(-1) takes 2D grid and uses wildcard to flatten the corresponding ANSWERS into a 1D straight line
-        #But, loss is (Total Words, Vocab Size). Wildcard and size are formatting it
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
-    # 1. Measurement: Speed & Memory
+    # 1. Measurement: Execution Speed & Peak GPU Memory
     model.train()
     start_time = time.time()
     total_tokens = 0
@@ -47,13 +49,14 @@ def evaluate_config(config, device, train_loader, val_loader):
         loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
         loss.backward()
         optimizer.step()
+        # Accumulate token count (batch_size * seq_len)
         total_tokens += x.numel()
     
     duration = time.time() - start_time
     tokens_per_sec = total_tokens / (duration + 1e-9)
     peak_vram = get_gpu_memory()
 
-    # 2. Measurement: Perplexity
+    # 2. Measurement: Perplexity (PPL) on validation data slice
     model.eval()
     total_loss = 0
     count = 0
@@ -72,16 +75,20 @@ def evaluate_config(config, device, train_loader, val_loader):
     return ppl, tokens_per_sec, peak_vram
 
 def run_aft_benchmarks():
+    """
+    Loops through various AFT and standard configurations, running evaluations and outputting results.
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"--- STARTING AFT BONUS BENCHMARKS ON {str(device).upper()} ---")
     
+    # Load dataset
     try:
         train_loader, val_loader, _ = get_dataloaders(batch_size=4, seq_len=128)
     except Exception as e:
         print(f"Error loading data: {e}")
         return
 
-    # Variants to test
+    # List of configurations to profile
     tests = [
         {"name": "Standard (Baseline)", "type": "standard", "pos": "absolute"},
         {"name": "Hybrid (Previous Best)", "type": "mqa", "pos": "alibi", "conv": True},
@@ -101,7 +108,7 @@ def run_aft_benchmarks():
         config.use_conv = bool(t.get('conv', False))
         config.aft_mode = str(t.get('mode', 'full'))
         
-        # Consistent scale
+        # Consistent scale across configurations
         config.d_model = 128
         config.n_heads = 4
         config.n_layers = 2
@@ -120,7 +127,7 @@ def run_aft_benchmarks():
             print(f"  > FAILED: {str(e)}")
             results.append({"Variant": t['name'], "PPL": "FAIL", "Speed": 0, "VRAM": 0})
 
-    # Output results to file
+    # Save results to a Markdown file
     with open("aft_results.md", "w") as f:
         f.write("# AFT Bonus Benchmarking Results\n\n")
         f.write("| Variant | PPL | Speed (tok/s) | VRAM (MB) |\n")

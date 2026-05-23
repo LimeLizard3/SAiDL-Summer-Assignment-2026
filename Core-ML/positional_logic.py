@@ -4,47 +4,55 @@ import math
 
 def apply_rotary_emb(x, cos, sin):
     """
-    x: (batch, n_heads, seq_len, d_k)
-    cos/sin: (seq_len, d_k)
+    Applies Rotary Positional Embeddings (RoPE) to input tensor x.
+    Inputs:
+        x: Query/Key activation tensor of shape [batch, n_heads, seq_len, d_k]
+        cos/sin: Pre-computed cosine/sine components of shape [max_seq_len, d_k]
+    Output:
+        Rotated tensor of shape [batch, n_heads, seq_len, d_k]
     """
-    # 1. d_k is our "Head Dimension" (e.g. 32). 
+    # Retrieve head dimension d_k (scalar integer)
     d_k = x.size(-1)
     
-    # 2. Split the list into even and odd indices (creating coordinate pairs)
-    x_even = x[..., 0::2] # Decimals 0, 2, 4...
-    x_odd = x[..., 1::2]  # Decimals 1, 3, 5...
+    # Split the last dimension into even and odd indices to form coordinate pairs:
+    # x_even shape: [batch, n_heads, seq_len, d_k/2]
+    x_even = x[..., 0::2]
+    # x_odd shape: [batch, n_heads, seq_len, d_k/2]
+    x_odd = x[..., 1::2]
     
-    # 3. Align cos and sin for broadcasting: (1, 1, seq_len, d_k/2)
-    # We only take as many as we need for the current sequence.
+    # Slice cos/sin up to seq_len and d_k/2, then reshape to [1, 1, seq_len, d_k/2] for broadcasting
     cos = cos[:x.size(2), :d_k//2].view(1, 1, x.size(2), d_k//2)
     sin = sin[:x.size(2), :d_k//2].view(1, 1, x.size(2), d_k//2)
     
-    # 4. Standard Rotation Matrix applied to each pair:
-    # out_x = x*cos - y*sin
-    # out_y = x*sin + y*cos
+    # Initialize empty tensor of the same shape and type as x
     out = torch.empty_like(x)
+    # Rotate even dimensions: out_even = x_even * cos - x_odd * sin
     out[..., 0::2] = x_even * cos - x_odd * sin
+    # Rotate odd dimensions: out_odd = x_even * sin + x_odd * cos
     out[..., 1::2] = x_even * sin + x_odd * cos
     return out
 
 def get_alibi_slope(n_heads):
     """
-    Standard ALiBi slope calculation.
+    Calculates the geometric progression of decay slopes for ALiBi.
+    Input:
+        n_heads: Number of attention heads (scalar integer)
+    Output:
+        List of floats containing slopes for each head (length: n_heads)
     """
     def get_slopes_power_of_2(n):
-        # The paper uses start = 2^(-8/n). 
-        # Example for 4 heads: 2^(-2) = 0.25
+        # Calculate base ratio for geometric progression: start = 2^(-8/n)
         start = (2 ** (-8 / n))
         ratio = start
-        # Returns [start^1, start^2, start^3, ...]
+        # Generate geometric series: [start, start^2, start^3, ..., start^n]
         return [start * (ratio**i) for i in range(n)]
 
-    # If heads is a power of 2 (2, 4, 8, 16...), it's easy.
+    # If n_heads is a power of 2, calculate slopes directly
     if math.log2(n_heads).is_integer():
         return get_slopes_power_of_2(n_heads)
     else:
-        # If not (like 6 heads), we interpolate from the next power of 2.
-        # This ensures the slopes remain mathematically diverse.
+        # For non-power-of-2 heads, calculate slopes for the closest power of 2
+        # and interpolate the remaining slopes to maintain diversity
         closest_power_of_2 = 2**math.floor(math.log2(n_heads))
         slopes_base = get_slopes_power_of_2(closest_power_of_2)
         slopes_extra = get_slopes_power_of_2(2 * closest_power_of_2)[0::2][:n_heads - closest_power_of_2]
@@ -52,19 +60,28 @@ def get_alibi_slope(n_heads):
 
 def build_alibi_bias(n_heads, seq_len, device):
     """
-    Returns a bias matrix of shape (n_heads, seq_len, seq_len)
+    Generates the ALiBi bias matrix to penalize long-distance token interactions.
+    Inputs:
+        n_heads: Number of attention heads (scalar integer)
+        seq_len: Current context length (scalar integer)
+        device: PyTorch device on which to allocate the tensor
+    Output:
+        Bias tensor of shape [1, n_heads, seq_len, seq_len]
     """
-    # 1. Generate the slopes for each head
+    # Create slopes tensor and reshape to [n_heads, 1, 1] for 2D distance broadcasting
     slopes = torch.tensor(get_alibi_slope(n_heads), device=device).view(n_heads, 1, 1)
     
-    # 2. Create the "Ruler" of indices: [0, 1, 2, 3...]
+    # Create a range of indices from 0 to seq_len-1 (shape [seq_len])
     m = torch.arange(seq_len, device=device)
     
-    # 3. Create a 2D grid of distances by subtracting the ruler from itself.
-    # Result: Grid[i, j] = j - i
+    # Compute relative distance matrix using broadcasting subtraction:
+    # m.unsqueeze(0) shape: [1, seq_len]
+    # m.unsqueeze(1) shape: [seq_len, 1]
+    # distance_matrix shape: [seq_len, seq_len], where entry (i, j) is j - i
     distance_matrix = (m.unsqueeze(0) - m.unsqueeze(1))
     
-    # 4. Multiply slopes by distance to get the final penalty bias.
-    # Words in the past (j < i) will get negative penalties.
+    # Apply slope scaling to distance matrix: shape [n_heads, seq_len, seq_len]
+    # Future tokens (j > i) get positive values (will be masked anyway)
+    # Past tokens (j < i) get negative values (distance penalty)
     bias = slopes * distance_matrix 
-    return bias.unsqueeze(0) # (1, n_heads, seq_len, seq_len)
+    return bias.unsqueeze(0) # Reshape to [1, n_heads, seq_len, seq_len]

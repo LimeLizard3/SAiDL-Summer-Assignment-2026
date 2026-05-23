@@ -5,6 +5,10 @@ import math
 from positional_logic import apply_rotary_emb
 
 class SlidingWindowAttention(nn.Module):
+    """
+    Sliding Window Attention.
+    Restricts the receptive field to a local context window to reduce memory bandwidth.
+    """
     def __init__(self, d_model: int, n_heads: int, window_size: int = 50, dropout: float = 0.1):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
@@ -21,48 +25,56 @@ class SlidingWindowAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None, pos_params=None):
+        # Input shape x: [batch_size, seq_len, d_model]
         bsz, seq_len, _ = x.size()
         
-        # Standard projection
+        # Projections to Q, K, V; reshaped to: [batch_size, n_heads, seq_len, d_k]
         q = self.q_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         k = self.k_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         v = self.v_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         
-        # [Task 3] Apply RoPE if provided
+        # Apply RoPE positional rotations if provided
         if pos_params is not None and "cos" in pos_params:
             q = apply_rotary_emb(q, pos_params["cos"], pos_params["sin"])
             k = apply_rotary_emb(k, pos_params["cos"], pos_params["sin"])
         
+        # Calculate raw dot-product attention scores; shape: [batch_size, n_heads, seq_len, seq_len]
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
         
-        # [Task 3] Apply ALiBi bias if provided
+        # Apply ALiBi bias penalty if provided
         if pos_params is not None and "alibi_bias" in pos_params:
             scores = scores + pos_params["alibi_bias"][:, :, :seq_len, :seq_len]
         
-        # Generate the normal causal mask ensuring we can't look into the future
+        # Create sliding window causal mask: shape [seq_len, seq_len]
         device = x.device
         window_mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
         
-        # Magic of Sliding Window: We literally subtract the 1s that are too far in the past!
-        # This forces the matrix to only have a small diagonal band of "1"s (the window).
+        # Mask out tokens that are further in the past than window_size
         if self.window_size > 0:
             past_mask = torch.tril(torch.ones(seq_len, seq_len, device=device), diagonal=-self.window_size)
             window_mask = window_mask - past_mask
         
+        # Reshape for broadcasting over batch and head dimensions: [1, 1, seq_len, seq_len]
         window_mask = window_mask.view(1, 1, seq_len, seq_len)
         
-        # Overwrite the standard mask logic
+        # Mask out unavailable tokens by filling with negative infinity
         scores = scores.masked_fill(window_mask == 0, float('-inf'))
             
+        # Standard softmax activation
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
         
+        # Multiply attention weights by values; output shape: [batch_size, n_heads, seq_len, d_k]
         output = torch.matmul(attn_weights, v)
+        # Reshape back to sequence representation shape: [batch_size, seq_len, d_model]
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model)
         return self.out_proj(output)
 
-
 class MultiQueryAttention(nn.Module):
+    """
+    Multi-Query Attention (MQA).
+    Shares a single Key and Value head across all Query heads to reduce memory bandwidth.
+    """
     def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
@@ -70,10 +82,8 @@ class MultiQueryAttention(nn.Module):
         self.n_heads = n_heads
         self.d_k = d_model // n_heads
         
-        # MAGIC: Q gets full projection...
+        # Q receives full projection dimension, while K & V receive single-head dimension
         self.q_proj = nn.Linear(d_model, d_model)
-        # ...but Keys and Values ONLY get 1 single head of projection! 
-        # This saves massive VRAM.
         self.k_proj = nn.Linear(d_model, self.d_k) 
         self.v_proj = nn.Linear(d_model, self.d_k)
         
@@ -81,38 +91,50 @@ class MultiQueryAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None, pos_params=None):
+        # Input shape x: [batch_size, seq_len, d_model]
         bsz, seq_len, _ = x.size()
         
-        # Q shape: (Batch, Heads, Length, Dim)
+        # Q shape: [batch_size, n_heads, seq_len, d_k]
         q = self.q_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         
-        # K, V shape: (Batch, 1, Length, Dim)
+        # K and V shape: [batch_size, 1, seq_len, d_k] (only a single head)
         k = self.k_proj(x).view(bsz, seq_len, 1, self.d_k).transpose(1, 2)
         v = self.v_proj(x).view(bsz, seq_len, 1, self.d_k).transpose(1, 2)
         
-        # [Task 3] Apply RoPE if provided
+        # Apply RoPE positional rotations if provided
         if pos_params is not None and "cos" in pos_params:
             q = apply_rotary_emb(q, pos_params["cos"], pos_params["sin"])
             k = apply_rotary_emb(k, pos_params["cos"], pos_params["sin"])
             
+        # Compute attention scores; Single K head is broadcasted over all Q heads:
+        # scores shape: [batch_size, n_heads, seq_len, seq_len]
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
         
-        # [Task 3] Apply ALiBi bias if provided
+        # Apply ALiBi bias penalty if provided
         if pos_params is not None and "alibi_bias" in pos_params:
             scores = scores + pos_params["alibi_bias"][:, :, :seq_len, :seq_len]
         
+        # Apply causal masking
         if mask is not None:
             scores = scores.masked_fill(mask == 0, float('-inf'))
             
+        # Standard softmax activation
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
         
+        # Multiply attention weights by values (V is broadcasted to match heads);
+        # output shape: [batch_size, n_heads, seq_len, d_k]
         output = torch.matmul(attn_weights, v)
+        # Reshape to final representation shape: [batch_size, seq_len, d_model]
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model)
         return self.out_proj(output)
 
-
 class LinearAttention(nn.Module):
+    """
+    Causal Linear Attention.
+    Re-orders matrix multiplication from (Q*K)*V to Q*(K*V) to bypass the O(N^2) similarity matrix.
+    Uses cumulative sums over time to enforce causality.
+    """
     def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
@@ -126,52 +148,52 @@ class LinearAttention(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model)
 
     def forward(self, x, mask=None, pos_params=None):
+        # Input shape x: [batch_size, seq_len, d_model]
         bsz, seq_len, _ = x.size()
         
+        # Standard projections to Q, K, V; shape: [batch_size, n_heads, seq_len, d_k]
         q = self.q_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         k = self.k_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         v = self.v_proj(x).view(bsz, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         
-        # [Task 3] Apply RoPE if provided (Linear Attention only supports RoPE)
+        # Apply RoPE positional rotations (Linear Attention depends on RoPE for positional stability)
         if pos_params is not None and "cos" in pos_params:
             q = apply_rotary_emb(q, pos_params["cos"], pos_params["sin"])
             k = apply_rotary_emb(k, pos_params["cos"], pos_params["sin"])
         
-        # In Linear Attention, we delete the Softmax operation entirely!
-        # Instead, we just force Q and K to be strictly positive numbers using ReLU.
+        # Apply a ReLU-based kernel activation to ensure non-negative values in denominator
         q = F.relu(q) + 1e-6
         k = F.relu(k) + 1e-6
         
-        # EXPLANATION OF THE MATH TRICK:
-        # Standard: Output = (Q * K) * V   <- The Q*K step creates a massive (Seq, Seq) matrix.
-        # Linear:   Output = Q * (K * V)   <- Math says we can re-order this! 
-        # Below, we are literally multiplying K and V first, and then applying Q. 
-        # This completely skips building the N x N grid!
-        
-        # To make it causal (so word 10 can't read word 11's memory), 
-        # we calculate a running combined sum of matrix (K * V) over time.
+        # Compute outer product of Key and Value vectors for each timestep:
+        # kv shape: [batch_size, n_heads, seq_len, d_k, d_k]
         kv = torch.einsum('bhtd,bhte->bhtde', k, v)
+        # Cumulative sum along the sequence dimension (dim=2) to enforce causality
+        # kv_cumsum shape: [batch_size, n_heads, seq_len, d_k, d_k]
         kv_cumsum = torch.cumsum(kv, dim=2)
         
-        # Apply Q strictly to the moving sum of memory.
+        # Compute numerator output: project Q onto the causal KV memory accumulation
+        # num shape: [batch_size, n_heads, seq_len, d_k]
         num = torch.einsum('bhtd,bhtde->bhte', q, kv_cumsum)
         
-        # Normalize the result so the numbers don't explode to infinity
+        # Compute normalizer denominator to stabilize scaling over sequence length
+        # k_cumsum shape: [batch_size, n_heads, seq_len, d_k]
         k_cumsum = torch.cumsum(k, dim=2)
+        # den shape: [batch_size, n_heads, seq_len, 1]
         den = torch.einsum('bhtd,bhtd->bht', q, k_cumsum).unsqueeze(-1) + 1e-6
         
+        # Normalize: shape [batch_size, n_heads, seq_len, d_k]
         output = num / den
         
-        # And we are done! Zero (Seq x Seq) massive matrixes were generated!
+        # Reshape to final sequence representation shape: [batch_size, seq_len, d_model]
         output = output.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model)
         return self.out_proj(output)
 
-
 class AFTAttention(nn.Module):
     """
-    [Bonus Task] Attention-Free Transformer (AFT).
-    Replaces dot-product attention with query-gated element-wise aggregation.
-    Supports: simple, full, local, conv.
+    Attention-Free Transformer (AFT).
+    Bypasses dot-product attention entirely using a query-gated, element-wise aggregation.
+    Supports modes: simple, full, local, conv.
     """
     def __init__(self, d_model: int, n_heads: int, max_seq_len: int = 1024, mode: str = "full", window_size: int = 50, dropout: float = 0.1):
         super().__init__()
@@ -179,91 +201,85 @@ class AFTAttention(nn.Module):
         self.mode = mode
         self.window_size = window_size
         
+        # Linear projections for Queries, Keys, and Values
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
         self.v_proj = nn.Linear(d_model, d_model)
         
-        # AFT positional weights w_{t,i}
+        # Instantiate learned positional weight parameters
         if mode == "full":
+            # Learn a unique pairwise bias for every position pair: shape [max_seq_len, max_seq_len]
             self.wb = nn.Parameter(torch.randn(max_seq_len, max_seq_len) / math.sqrt(d_model))
         elif mode == "local" or mode == "conv":
+            # Learn relative distance-based biases: shape [max_seq_len]
             self.wb = nn.Parameter(torch.randn(max_seq_len) / math.sqrt(d_model))
-        #.Parameter highlights the random numbers we generate so that backprop knows to tweak them
-        #wb is called "weight bias"
-        #Full mode tells AI to learn completely unique relationships for every possible pair of frames (that's why 2D)
-        #Local/Conv mode tells AI to only care about relative distance and not exact pairs
 
         self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None, pos_params=None):
+        # Input shape x: [batch_size, seq_len, d_model]
         bsz, seq_len, _ = x.size()
         
+        # Project inputs; output shapes: [batch_size, seq_len, d_model]
         q = self.q_proj(x)
         k = self.k_proj(x)
         v = self.v_proj(x)
         
-        # Q Gating (Sigmoid)
-        q = torch.sigmoid(q) #This builds the knobs we were talking about RE Query Gating, and sigmoid is nice as it's all now b/w 0&1
+        # Apply Query Gating activation (sigmoid constraint between 0 and 1)
+        q = torch.sigmoid(q)
 
         if self.mode == "simple":
-            # Y_t = q_t * (sum(exp(k_i) * v_i) / sum(exp(k_i)))
-            # Causal implementation using cumulative sums
+            # AFT-Simple variant:
+            # y_t = q_t * (sum_{i<=t}(exp(k_i)*v_i) / sum_{i<=t}(exp(k_i)))
             k_exp = torch.exp(k)
             kv = k_exp * v
-            num = torch.cumsum(kv, dim=1) #Cumulative Sum
-            den = torch.cumsum(k_exp, dim=1) + 1e-6 #dim = 1 is for seq_len, dim = 0 is for bsz
-            #We use dim=1 as it represents TIME: The chronological list of frames
-            #If we used dim-0, it's like adding frame 1 of game A to frame 1 of game B. It represents the No. of separate, II games
+            # Cumulative sums along the sequence length dimension (dim=1) to ensure causality
+            num = torch.cumsum(kv, dim=1)
+            den = torch.cumsum(k_exp, dim=1) + 1e-6
             output = q * (num / den)
-
-        #Issue with simple is that it's not relative to time. A frame of 80% importance will have the same % 1000 frames later
             
         else:
-            # Full, Local, and Conv modes involve a weight matrix W
+            # Extract and shape the relevant positional weight matrix W: [seq_len, seq_len]
             if self.mode == "full":
                 w = self.wb[:seq_len, :seq_len]
-            else: # local or conv
-                # Relative weights: w[t, i] = wb[t-relative_dist]
+            else:
+                # Compute 2D relative index distances grid via broadcasting subtraction: shape [seq_len, seq_len]
                 rel_pos = torch.arange(seq_len, device=x.device).unsqueeze(0) - torch.arange(seq_len, device=x.device).unsqueeze(1)
-                #PyTorch knows that the dimensions don't match (Horizontal-Vertical), so it BROADCASTS and stretches the vertical & horizontal
-                #ruler and subtracts the cells one by one and gets the relative position of each pair
-                # rel_pos contains distances. We only care about causal side (dist >= 0)
-                # wb index 0 is dist=0, index 10 is dist=10 behind.
-                w = self.wb[torch.abs(rel_pos)] # Simple relative index (Takes res_pos) and outputs the corresponding pair
+                # Map distances to corresponding parameter values using absolute index lookup
+                w = self.wb[torch.abs(rel_pos)]
             
-            # Apply causal masking to the weight matrix
+            # Create base causal mask
             causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device))
             
-            # If mode is 'local', we also apply a sliding window mask
-            if self.mode == "local" and self.window_size > 0: #Focuses on immediate local neighbourhood
+            # Apply local sliding window restriction if mode is local
+            if self.mode == "local" and self.window_size > 0:
                 past_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device), diagonal=-self.window_size)
                 causal_mask = causal_mask - past_mask
             
-            # Combining w and k
-            # score_{t,i} = w_{t,i} + k_i
-            # We broadcast k over the target dimension t
-            k_expanded = k.unsqueeze(1) # (Batch, 1, Time, Dimensions/Features)
-            w_expanded = w.unsqueeze(0).unsqueeze(-1) # (1, Target time, Source time, 1)
+            # Broadcast Key and Weight tensors together to compute scores:
+            # k_expanded shape: [batch_size, 1, seq_len, d_model] (target query time dimension inserted)
+            k_expanded = k.unsqueeze(1)
+            # w_expanded shape: [1, seq_len, seq_len, 1] (batch and feature dimensions inserted)
+            w_expanded = w.unsqueeze(0).unsqueeze(-1)
             
-            scores = w_expanded + k_expanded # (B, T, T, D) Broadcasting to the rescue yet again
+            # Add together: scores shape: [batch_size, seq_len, seq_len, d_model]
+            scores = w_expanded + k_expanded
             
-            # Mask out future positions for causality
+            # Apply causal mask: mask shape [1, seq_len, seq_len, 1]
             scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(-1) == 0, float('-inf'))
             
-            # Offset by max for stability
-            max_scores = torch.max(scores, dim=2, keepdim=True)[0] #torch.max returnes values and indicies tuple, we only want values [0]
-            #If we used Target Time (dim=1) instead, we would scan across target frames, instead finding the max score for a single past memory
-            #across current frames (it would add vertically instead of horizontally, combining multiple frames when we're supposed to be looking at the target frame)
-            #dim=2 basically says "look at the target row, and sum up all the prev. data entries in that row that came before it"
-
+            # Extract maximum score along the source time dimension (dim=2) for numerical stability
+            max_scores = torch.max(scores, dim=2, keepdim=True)[0]
+            # Exponentiate stable scores
             exp_scores = torch.exp(scores - max_scores)
-            #We do this for both num and den, meaning that the subtraction roughly cancels out. We do this to reduce the risk of a crash
             
-            num = torch.sum(exp_scores * v.unsqueeze(1), dim=2) #v: [B,Target time, Source time, F] (after broadcasting)
-            #Adding up the source time and squashing all the info from prev. frames and stuff it into target time
+            # Weighted sum over values along the source time dimension: output shape [batch_size, seq_len, d_model]
+            num = torch.sum(exp_scores * v.unsqueeze(1), dim=2)
+            # Sum of exponential weights: output shape [batch_size, seq_len, d_model]
             den = torch.sum(exp_scores, dim=2) + 1e-6
             
+            # Multiply query-gated activations by attention values
             output = q * (num / den)
             
         return self.out_proj(output)
