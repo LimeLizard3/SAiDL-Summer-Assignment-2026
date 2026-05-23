@@ -388,6 +388,35 @@ Attention scales quadratically with sequence length $\mathcal{O}((3L)^2)$, makin
 \end{itemize}
 
 \subsection{Bonus D: xLSTM as Policy Backbone}
+We evaluate the performance of the \textbf{xLSTM network as a recurrent policy backbone} (Bonus D) in continuous control tasks. We replace the Causal Transformer actor with a custom xLSTM actor and compare their learning efficiency under two partially observable settings:
+\begin{enumerate}
+    \item \textbf{POMDP (Hidden-Velocity Challenge)}: The velocity observations are masked, requiring recurrent state inference.
+    \item \textbf{Sparse Credit Assignment (Delayed-Reward Challenge)}: The reward is delayed by $K=10$ steps.
+\end{enumerate}
+
+As shown in Figure \ref{fig:xlstm_comparison}, we compare the training progress of the xLSTM-TD3 policy against the Transformer-TD3 baseline over $150,000$ simulation steps.
+
+\begin{figure}[!ht]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{xLSTM_vs_TD3_POMDP.png}
+        \caption{POMDP: Hidden-Velocity Challenge.}
+        \label{fig:xlstm_pomdp}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{xLSTM_vs_TD3_DelayedReward.png}
+        \caption{Sparse Credit Assignment: Delayed Rewards.}
+        \label{fig:xlstm_delayed}
+    \end{subfigure}
+    \caption{Performance comparison of xLSTM-TD3 vs. Transformer-TD3 policies under sensory and credit assignment stressors.}
+    \label{fig:xlstm_comparison}
+\end{figure}
+
+\FloatBarrier
+
 \subsubsection{xLSTM Recurrent Loop Projection Offloading}
 In our custom xLSTM implementation (\texttt{xlstm\_model.py}), the sLSTM and mLSTM recurrent cells loop sequentially over time:
 \begin{equation}
