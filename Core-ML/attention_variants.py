@@ -51,7 +51,7 @@ class SlidingWindowAttention(nn.Module):
         
         # Mask out tokens that are further in the past than window_size
         if self.window_size > 0:
-            past_mask = torch.tril(torch.ones(seq_len, seq_len, device=device), diagonal=-self.window_size)
+            past_mask = torch.tril(torch.ones(seq_len, seq_len, device=device), diagonal=-self.window_size) #-ve means down/left, +ve means up/right
             window_mask = window_mask - past_mask
         
         # Reshape for broadcasting over batch and head dimensions: [1, 1, seq_len, seq_len]
@@ -67,7 +67,7 @@ class SlidingWindowAttention(nn.Module):
         # Multiply attention weights by values; output shape: [batch_size, n_heads, seq_len, d_k]
         output = torch.matmul(attn_weights, v)
         # Reshape back to sequence representation shape: [batch_size, seq_len, d_model]
-        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model)
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, self.d_model) #Glues everything together
         return self.out_proj(output)
 
 class MultiQueryAttention(nn.Module):
@@ -119,6 +119,7 @@ class MultiQueryAttention(nn.Module):
             scores = scores.masked_fill(mask == 0, float('-inf'))
             
         # Standard softmax activation
+        #attn_weights shape: [bsz,n_heads,seq_len,seq_len]
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
         
@@ -161,28 +162,75 @@ class LinearAttention(nn.Module):
             q = apply_rotary_emb(q, pos_params["cos"], pos_params["sin"])
             k = apply_rotary_emb(k, pos_params["cos"], pos_params["sin"])
         
-        # Apply a ReLU-based kernel activation to ensure non-negative values in denominator
+        # Apply a ReLU-based kernel activation to ensure non-negative values in denominator.
+        # Linear attention replaces the exponential similarity exp(q^T k) with a kernel feature map phi(x).
+        # We use phi(x) = ReLU(x) + epsilon. The ReLU ensures all features are non-negative,
+        # which prevents terms in the denominator from cancelling out, preserving stability.
+        # The 1e-6 constant avoids any division-by-zero issues.
         q = F.relu(q) + 1e-6
         k = F.relu(k) + 1e-6
         
-        # Compute outer product of Key and Value vectors for each timestep:
+        # Compute outer product of Key and Value vectors for each individual timestep:
+        #
+        # Einstein Summation ('bhtd,bhte->bhtde') Syntax & Logic:
+        #   - 'b': Batch size (bsz)
+        #   - 'h': Number of attention heads (n_heads)
+        #   - 't': Timestep / sequence position (seq_len)
+        #   - 'd': Feature dimension for Key (d_k)
+        #   - 'e': Feature dimension for Value (d_k / d_v)
+        #
+        # For each batch, head, and timestep t, we take the Key vector k_t [shape: d_k] 
+        # and the Value vector v_t [shape: d_k] and perform an outer product (k_t * v_t^T).
+        # This yields a matrix of shape [d_k, d_k] representing the association between keys and values at step t.
         # kv shape: [batch_size, n_heads, seq_len, d_k, d_k]
         kv = torch.einsum('bhtd,bhte->bhtde', k, v)
-        # Cumulative sum along the sequence dimension (dim=2) to enforce causality
+        
+        # Cumulative sum along the sequence dimension (dim=2) to enforce causality:
+        #
+        # To maintain autoregressive causal behavior (tokens can only look at past/current tokens),
+        # we compute the cumulative sum of the key-value outer products over the time dimension.
+        # At timestep t, kv_cumsum represents the causal memory accumulator matrix:
+        #   M_t = sum_{j=1}^{t} (phi(k_j) * v_j^T)
         # kv_cumsum shape: [batch_size, n_heads, seq_len, d_k, d_k]
         kv_cumsum = torch.cumsum(kv, dim=2)
         
-        # Compute numerator output: project Q onto the causal KV memory accumulation
+        # Compute numerator output: project Q onto the causal KV memory accumulation.
+        #
+        # Einstein Summation ('bhtd,bhtde->bhte') Syntax & Logic:
+        #   - 'bhtd'  : Query tensor q [shape: batch_size, n_heads, seq_len, d_k]
+        #   - 'bhtde' : Accumulated memory kv_cumsum [shape: batch_size, n_heads, seq_len, d_k, d_k]
+        #   - '->bhte': Output numerator tensor [shape: batch_size, n_heads, seq_len, d_k]
+        #
+        # For each batch, head, and timestep t, we compute a vector-matrix product:
+        #   num_t = q_t^T * M_t
+        # This multiplies the query vector of size [d_k] (index 'd') by the memory accumulator matrix 
+        # of size [d_k, d_k] (indices 'd' and 'e'), contracting (summing) over the key dimension 'd'.
         # num shape: [batch_size, n_heads, seq_len, d_k]
         num = torch.einsum('bhtd,bhtde->bhte', q, kv_cumsum)
         
-        # Compute normalizer denominator to stabilize scaling over sequence length
-        # k_cumsum shape: [batch_size, n_heads, seq_len, d_k]
+        # Compute normalizer denominator to stabilize scaling over sequence length.
+        #
+        # Just as standard softmax attention divides by a sum of exponents, linear attention divides 
+        # by the projection of the query onto the cumulative sum of keys.
+        #
+        # 1. Compute the cumulative sum of keys along the time dimension (dim=2) to enforce causality:
+        #    S_t = sum_{j=1}^{t} phi(k_j)
+        #    k_cumsum shape: [batch_size, n_heads, seq_len, d_k]
         k_cumsum = torch.cumsum(k, dim=2)
-        # den shape: [batch_size, n_heads, seq_len, 1]
+        
+        # 2. Project Query onto the cumulative keys:
+        #    Einstein Summation ('bhtd,bhtd->bht') Syntax & Logic:
+        #      - 'bhtd', 'bhtd' : Elements of q and k_cumsum
+        #      - '->bht'        : Dot product for each batch, head, and timestep (sums over dimension 'd')
+        #    Mathematically, this computes: den_t = q_t^T * S_t
+        #    We unsqueeze the last dimension to get shape [batch_size, n_heads, seq_len, 1] for broadcasting.
+        #    Adding 1e-6 prevents division by zero.
+        #    den shape: [batch_size, n_heads, seq_len, 1]
         den = torch.einsum('bhtd,bhtd->bht', q, k_cumsum).unsqueeze(-1) + 1e-6
         
-        # Normalize: shape [batch_size, n_heads, seq_len, d_k]
+        # Normalize: divide numerator by denominator.
+        # Element-wise division is broadcasted across the final value dimension (d_k).
+        # output shape: [batch_size, n_heads, seq_len, d_k]
         output = num / den
         
         # Reshape to final sequence representation shape: [batch_size, seq_len, d_model]
