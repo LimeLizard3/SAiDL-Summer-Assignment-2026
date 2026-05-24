@@ -248,7 +248,7 @@ To stabilize the training run, we implemented five key optimizations in \texttt{
 As shown in Figure \ref{fig:rlhf_extended}, while our alignment strategies successfully delay the policy collapse beyond the initial $50,000$ steps (compared to the rapid sawtooth collapse of the unoptimized setup in Figure \ref{fig:rlhf_sawtooth}), the agent still collapses toward the end of the extended $300,000$-step run. This late-stage failure is driven by three primary factors:
 \begin{itemize}
     \item \textbf{OOD Reward Hacking:} The policy eventually drifts into out-of-distribution (OOD) state-action regions and exploits false-positive high predictions from the Jury, adopting physically unstable gaits that lead to immediate balance collapse.
-    \item \textbf{normalizer statistics Drift:} Continuous exploration shifts the running state normalizer statistics away from the distribution the Jury studied during expert pre-training. This sensory shift ("dialect mismatch") corrupts the Jury's reward predictions.
+    \item \textbf{Normalizer Statistics Drift:} Continuous exploration shifts the running state normalizer statistics away from the distribution the Jury studied during expert pre-training. This sensory shift ("dialect mismatch") corrupts the Jury's reward predictions.
     \item \textbf{Jury Representation Drift:} Continuous fine-tuning on highly correlated student trajectories causes the Jury to overfit to recent rollouts, slowly forgetting the boundaries of expert hopping.
 \end{itemize}
 
@@ -310,7 +310,18 @@ We track and plot the attention entropy $H(A_t) = -\sum_j A_{t,j} \log A_{t,j}$ 
 This section details the design and evaluation of the bonus tasks from the assignment handout, focusing on positional encoding ablations, combined stressor challenges, in-context learning, and recurrent sequence models.
 
 \subsection{Bonus A: Positional Encoding Ablation}
-We benchmarked Learner-based, Rotary Positional Embeddings (RoPE), and Sinusoidal Encodings on the hidden-velocity setting. Without positional encodings, the Transformer was "time-blind," creating a broad, low-accuracy focus. Sinusoidal Encodings provided the most stable "Temporal Ruler" for the causal history.
+We benchmarked three variants of Positional Encodings (PE) on the hidden-velocity setting to understand how temporal ordering affects Causal Transformer policies:
+\begin{itemize}
+    \item \textbf{Learned Positional Encodings}: The model learns a lookup table of parameter embeddings for each index $0, \dots, L-1$ during training. While simple and adaptive, learned encodings are constrained by the maximum context length seen during training and cannot generalize or extrapolate to longer sequence windows at test time.
+    \item \textbf{Sinusoidal Positional Encodings}: Fixed, deterministic sine and cosine functions of varying frequencies representing a temporal clock:
+    \begin{align}
+    PE_{(pos, 2i)} &= \sin\left(\frac{pos}{10000^{2i/d}}\right) \\
+    PE_{(pos, 2i+1)} &= \cos\left(\frac{pos}{10000^{2i/d}}\right)
+    \end{align}
+    where $pos$ is the history index, $i$ is the dimension index, and $d$ is the embedding dimension. This provides a smooth, continuous geometric structure that generalizes well and acts as a stable "Temporal Ruler."
+    \item \textbf{Rotary Positional Embeddings (RoPE)}: Rather than adding positional vectors directly to the inputs, RoPE applies a rotation matrix to the Query and Key vectors in the complex plane at each self-attention layer. This naturally encodes the relative distance between tokens geometrically and preserves translation invariance, enabling robust long-horizon dependency tracking.
+\end{itemize}
+Our evaluations, shown in Figure \ref{fig:pos_enc_ablation}, demonstrate that without positional encodings, the Transformer remains "time-blind" and fails to calculate the temporal derivatives needed for balance. Sinusoidal Encodings provided the most stable performance, preventing policy collapse and allowing the agent to settle into a sub-millimeter balance.
 
 \begin{figure}[!ht]
     \centering
@@ -386,6 +397,16 @@ Attention scales quadratically with sequence length $\mathcal{O}((3L)^2)$, makin
     \end{equation}
     This enables training with large effective batch sizes within consumer VRAM limits.
 \end{itemize}
+
+\paragraph{In-Context Evaluation and Correlation Graph:}
+We evaluate the Algorithm Distillation policy on in-context online reinforcement learning tasks. As shown in Figure \ref{fig:ad_benchmark}, the double y-axis plot compares the offline imitation learning MSE loss (on the left axis) and the corresponding online in-context evaluation rewards (on the right axis) across training epochs. During early epochs, as the training MSE loss drops from $0.45$ to $0.05$, the online evaluation reward increases from $19.53$ (unstable balance collapse) to over $600.0$ (mastery of stable hopping). This visualizes the strong correlation between offline action prediction accuracy and online in-context adaptation performance.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.7\textwidth]{ad_benchmark_results.png}
+    \caption{Algorithm Distillation (AD) Benchmark results: Offline training MSE loss (left axis) vs. Online in-context evaluation rewards (right axis) over training epochs.}
+    \label{fig:ad_benchmark}
+\end{figure}
 
 \subsection{Bonus D: xLSTM as Policy Backbone}
 We evaluate the performance of the \textbf{xLSTM network as a recurrent policy backbone} (Bonus D) in continuous control tasks. We replace the Causal Transformer actor with a custom xLSTM actor and compare their learning efficiency under two partially observable settings:
