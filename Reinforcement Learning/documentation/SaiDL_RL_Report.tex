@@ -13,12 +13,12 @@
 \usepackage{xcolor}
 \sloppy
 \usepackage{enumitem}
-\setlist[enumerate,1]{label={(\arabic*)}}
+\setlist[enumerate,1]{label={\arabic*)}}
 
-% Format section, subsection, and subsubsection numbering with brackets
-\renewcommand{\thesection}{(\arabic{section})}
-\renewcommand{\thesubsection}{(\arabic{section}.\arabic{subsection})}
-\renewcommand{\thesubsubsection}{(\arabic{section}.\arabic{subsection}.\arabic{subsubsection})}
+% Format section, subsection, and subsubsection numbering with a single closing bracket
+\renewcommand{\thesection}{\arabic{section})}
+\renewcommand{\thesubsection}{\arabic{section}.\arabic{subsection})}
+\renewcommand{\thesubsubsection}{\arabic{section}.\arabic{subsection}.\arabic{subsubsection})}
 
 % Adjust Table of Contents column widths natively to prevent bracketed numbers from overlapping titles
 \makeatletter
