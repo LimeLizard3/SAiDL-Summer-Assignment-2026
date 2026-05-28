@@ -15,6 +15,11 @@
 \usepackage{enumitem}
 \setlist[enumerate,1]{label={(\arabic*)}}
 
+% Format section, subsection, and subsubsection numbering with brackets
+\renewcommand{\thesection}{(\arabic{section})}
+\renewcommand{\thesubsection}{(\arabic{section}.\arabic{subsection})}
+\renewcommand{\thesubsubsection}{(\arabic{section}.\arabic{subsection}.\arabic{subsubsection})}
+
 \geometry{margin=1in}
 
 % Code snippet styling
