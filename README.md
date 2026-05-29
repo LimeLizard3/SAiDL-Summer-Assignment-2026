@@ -12,7 +12,7 @@ We designed and implemented a **highly modular Transformer Language Model** from
 * **3 Positional Encodings:** Absolute Positional Embeddings, Rotary Positional Embedding (RoPE), and Attention with Linear Biases (ALiBi).
 * **Convolution Hybrids:** Integrating Causal 1D Convolutions either as a Pre-Attention filter (Design A) or Interleaved Depthwise Separable layers (Design B).
 * **Attention-Free Transformer (AFT):** Implemented AFT-Simple, AFT-Local, and AFT-Full to entirely bypass the quadratic $O(N^2)$ dot-product attention bottleneck.
-* **Academic Report:** A complete LaTeX publication detailing the methodology, benchmarks, and extrapolation analysis is available at [SAiDL_Core-ML_Report.tex](./Core-ML/documentation/SAiDL_Core-ML_Report.tex).
+* **Academic Report:** A complete LaTeX publication detailing the methodology, benchmarks, and extrapolation analysis is available at [SAiDL_Core-ML_Report.tex](./Core-ML/Documentation/SAiDL_Core-ML_Report.tex).
 
 ### 🤖 [Track 2: Reinforcement Learning](./Reinforcement%20Learning)
 We extended continuous deep reinforcement learning on **Gymnasium's Hopper-v5** to handle partial observability and delayed rewards using advanced sequence models.
@@ -24,8 +24,8 @@ We extended continuous deep reinforcement learning on **Gymnasium's Hopper-v5** 
   * **Delayed Reward Challenge:** Delaying reward feedback by $K=10$ steps to test sparse credit assignment.
 * **Algorithm Distillation (AD):** Pre-trained sequence-conditioned Transformers on trajectories of active policy learning to achieve in-context reinforcement learning.
 * **RLHF (Reinforcement Learning from Human Feedback):** Trained a preference-based reward model from simulated query pairs to align TD3 policies with preferences.
-* **Academic Report:** A complete LaTeX publication draft detailing the RL methodology, benchmarks, and sequence policy evaluation is available at [SAiDL_RL_Report.tex](./Reinforcement%20Learning/documentation/SAiDL_RL_Report.tex).
-* **Mathematical & Engineering Deep-Dive:** See the details in [Optimizations.md](./Reinforcement%20Learning/documentation/Optimizations.md).
+* **Academic Report:** A complete LaTeX publication draft detailing the RL methodology, benchmarks, and sequence policy evaluation is available at [SAiDL_RL_Report.tex](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.tex).
+* **Mathematical & Engineering Deep-Dive:** See the details in [Optimizations.md](./Reinforcement%20Learning/Documentation/Optimizations.md).
 
 ---
 
@@ -44,7 +44,7 @@ SAiDL-Summer-Assignment-2026/
 │   ├── evaluate_all.py          # Auto-run diagnostics across all 12 combinations
 │   ├── extrapolation_test.py    # Tests sequence length extrapolation
 │   ├── benchmark_aft.py         # Benchmarking for AFT variants
-│   └── documentation/           # Academic reports and task-specific writeups
+│   └── Documentation/           # Academic reports and task-specific writeups
 │       └── SAiDL_Core-ML_Report.tex # Complete, formatted LaTeX report
 ├── Reinforcement Learning/
 │   ├── td3.py                   # TD3 agent with MLP policy
@@ -61,7 +61,7 @@ SAiDL-Summer-Assignment-2026/
 │   ├── generate_ad_dataset.py   # Generates training history dataset for AD
 │   ├── eval_ad.py               # Evaluation script for Algorithm Distillation
 │   ├── run_benchmarks.py        # Automated benchmarks for POMDP and delayed rewards
-│   └── documentation/           # Technical explanations of RL components
+│   └── Documentation/           # Technical explanations of RL components
 ```
 
 ---
@@ -133,7 +133,7 @@ The modular architectures were benchmarked on Perplexity (PPL), Inference Speed,
 | **HYBRID (Pre-Attn) MQA+ALiBi** | 27,515.80 | 12,075.8 | 526.5 |
 | **HYBRID (Interleaved) MQA+ALiBi** | 28,808.97 | 24,248.7 | 521.3 |
 
-*For in-depth analysis on why specific architectures fail/succeed under context window scaling, see the full [SAiDL_Core-ML_Report.tex](./Core-ML/documentation/SAiDL_Core-ML_Report.tex).*
+*For in-depth analysis on why specific architectures fail/succeed under context window scaling, see the full [SAiDL_Core-ML_Report.tex](./Core-ML/Documentation/SAiDL_Core-ML_Report.tex).*
 
 ---
 
@@ -148,7 +148,7 @@ The sequence policy networks (Causal Transformer vs. xLSTM) were benchmarked on 
 | **Delayed Reward ($k=10$)**| Causal Transformer | **399.71** | **399.53** | **137.29 $\pm$ 138.94**| **155.51 $\pm$ 145.47** | 125,000 |
 | | **xLSTM** | 320.02 | 156.71 | 90.23 $\pm$ 85.16 | 106.97 $\pm$ 83.80 | 130,000 |
 
-*For in-depth discussion on memory bottlenecks, state estimation capabilities, and sequence-based policies, see the full [SAiDL_RL_Report.tex](./Reinforcement%20Learning/documentation/SAiDL_RL_Report.tex).*
+*For in-depth discussion on memory bottlenecks, state estimation capabilities, and sequence-based policies, see the full [SAiDL_RL_Report.tex](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.tex).*
 
 ---
 

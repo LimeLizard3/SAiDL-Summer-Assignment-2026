@@ -35,8 +35,8 @@ We have compiled detailed, line-by-line guides and theoretical breakdowns for al
 
 | Document | Covered Files | Description |
 | :--- | :--- | :--- |
-| **[Report.tex](./SAiDL_RL_Report.tex)** | - | Complete LaTeX academic paper detailing findings. |
-| **[Optimizations.md](./Optimizations.md)** | - | Mathematical and engineering optimizations log. |
+| **[Report.tex](./SAiDL_RL_Report.tex)** | All Files | Complete LaTeX academic paper detailing findings. |
+| **[Optimizations.md](./Optimizations.md)** | All Files | Mathematical and engineering optimizations log. |
 | **[TD3 Architecture](./td3_explanation.md)** | [`td3.py`](../td3.py) | Clipped double-Q, target smoothing, and delay updates. |
 | **[MLP Training](./train_explanation.md)** | [`train.py`](../train.py) | Baseline MLP control loop and execution. |
 | **[Transformer Actor](./model_explanation.md)** | [`model.py`](../model.py) | Causal attention block and RoPE/ALiBi embeddings. |
