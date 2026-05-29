@@ -28,16 +28,16 @@ We have built a comprehensive library of **Line-by-Line breakdowns** for every s
 
 | Component | Detailed Line-by-Line Guide |
 | :--- | :--- |
-| **The Blueprint** | [`config_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/config_explanation.md) |
-| **The Data** | [`data_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/data_explanation.md) |
-| **The Brain** | [`model_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/model_explanation.md) |
-| **The Engines** | [`attention_variants_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/attention_variants_explanation.md) |
-| **The Hybrids** | [`conv_hybrid_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/conv_hybrid_explanation.md) |
-| **The Integrity** | [`causality_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/causality_explanation.md) |
-| **The Positioning**| [`positional_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/positional_explanation.md) |
-| **The Training** | [`train_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/train_explanation.md) |
-| **The Diagnostic** | [`evaluate_all_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/evaluate_all_explanation.md) |
-| **The Stability** | [`extrapolation_explanation.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/extrapolation_explanation.md) |
+| **The Blueprint** | [`config_explanation.md`](./config_explanation.md) |
+| **The Data** | [`data_explanation.md`](./data_explanation.md) |
+| **The Brain** | [`model_explanation.md`](./model_explanation.md) |
+| **The Engines** | [`attention_variants_explanation.md`](./attention_variants_explanation.md) |
+| **The Hybrids** | [`conv_hybrid_explanation.md`](./conv_hybrid_explanation.md) |
+| **The Integrity** | [`causality_explanation.md`](./causality_explanation.md) |
+| **The Positioning**| [`positional_explanation.md`](./positional_explanation.md) |
+| **The Training** | [`train_explanation.md`](./train_explanation.md) |
+| **The Diagnostic** | [`evaluate_all_explanation.md`](./evaluate_all_explanation.md) |
+| **The Stability** | [`extrapolation_explanation.md`](./extrapolation_explanation.md) |
 
 ---
 
@@ -57,6 +57,6 @@ python evaluate_all.py
 ---
 
 ## 📊 Final Benchmarks
-All performance metrics (Speed, Memory, Stability) are captured in the official **[`benchmarking_results.md`](file:///c:/Users/gauth/.gemini/antigravity/scratch/SaiDL%20Project/Core%20ML/benchmarking_results.md)**.
+All performance metrics (Speed, Memory, Stability) are captured in the official **[`benchmarking_results.md`](./benchmarking_results.md)**.
 
 **Built by [LimeLizard3] for SAiDL 2026.** 🟢 🏹 📊
