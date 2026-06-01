@@ -1,35 +1,35 @@
-# 🏰 SAiDL Summer Induction Assignment 2026
+# SAiDL Summer Induction Assignment 2026
 
-Welcome to the official repository for the **SAiDL Summer Induction Assignment 2026**. This codebase demonstrates the implementation, optimization, and validation of state-of-the-art sequence models applied across two distinct tracks: **Core Machine Learning (Transformer Architectures)** and **Reinforcement Learning (Continuous Control & Sequence Policy Optimization)**.
+This repository contains the implementation, benchmarks, and documentation for the SAiDL Summer Induction Assignment 2026. The project is split into two tracks: **Core Machine Learning (Transformer Architectures)** and **Reinforcement Learning (Continuous Control & Sequence Policy Optimization)**.
 
 ---
 
-## 🚀 Key Highlights & Architecture
+## Key Highlights & Architecture
 
-### 💎 [Track 1: Core Machine Learning](./Core-ML)
-We designed and implemented a **highly modular Transformer Language Model** from scratch, trained and evaluated on the **WikiText-2** dataset. The design decouples attention, positional logic, and local filters to evaluate architectural trade-offs systematically.
-* **4 Attention Variants:** Standard Dot-Product, Multi-Query Attention (MQA), Sliding Window Attention, and Linear Attention.
-* **3 Positional Encodings:** Absolute Positional Embeddings, Rotary Positional Embedding (RoPE), and Attention with Linear Biases (ALiBi).
-* **Convolution Hybrids:** Integrating Causal 1D Convolutions either as a Pre-Attention filter (Design A) or Interleaved Depthwise Separable layers (Design B).
-* **Attention-Free Transformer (AFT):** Implemented AFT-Simple, AFT-Local, and AFT-Full to entirely bypass the quadratic $O(N^2)$ dot-product attention bottleneck.
-* **Academic Report:** A complete LaTeX publication detailing the methodology, benchmarks, and extrapolation analysis is available at [SAiDL_Core-ML_Report.tex](./Core-ML/Documentation/SAiDL_Core-ML_Report.tex).
+### [Track 1: Core Machine Learning](./Core-ML)
+A modular Transformer Language Model implemented from scratch and evaluated on the **WikiText-2** dataset. The design decouples attention, positional logic, and local filters to evaluate architectural trade-offs:
+* **Attention Variants:** Standard Dot-Product, Multi-Query Attention (MQA), Sliding Window Attention, and Causal Linear Attention.
+* **Positional Encodings:** Absolute Positional Embeddings, Rotary Positional Embedding (RoPE), and Attention with Linear Biases (ALiBi).
+* **Convolution Hybrids:** Causal 1D Convolutions integrated either as a Pre-Attention filter (Design A) or Interleaved Depthwise Separable layers (Design B).
+* **Attention-Free Transformer (AFT):** Implementation of AFT-Simple, AFT-Local, and AFT-Full.
+* **Academic Report:** A complete PDF publication detailing the methodology, benchmarks, and extrapolation analysis is available at [SAiDL_Core_ML_Report.pdf](./Core-ML/Documentation/SAiDL_Core_ML_Report.pdf).
 
-### 🤖 [Track 2: Reinforcement Learning](./Reinforcement%20Learning)
-We extended continuous deep reinforcement learning on **Gymnasium's Hopper-v5** to handle partial observability and delayed rewards using advanced sequence models.
-* **TD3 Baseline:** Implemented a robust Twin Delayed DDPG (TD3) baseline with MLP policy networks trained over 1,000,000 steps.
+### [Track 2: Reinforcement Learning](./Reinforcement%20Learning)
+Continuous deep reinforcement learning on **Gymnasium's Hopper-v5** to handle partial observability and delayed rewards using sequence models:
+* **TD3 Baseline:** A Twin Delayed DDPG (TD3) baseline with MLP policy networks trained over 1,000,000 steps.
 * **Causal Transformer Policy:** Replaced the actor's MLP with a Causal Transformer policy to retain past trajectory history.
-* **xLSTM Integration:** Integrated Extended LSTM (sLSTM and mLSTM) architectures within the TD3 policy network to solve long-horizon memory tasks.
-* **Challenge Benchmarks:** Robust comparison under two hostile configurations:
+* **xLSTM Integration:** mLSTM/sLSTM architectures integrated within the TD3 policy network.
+* **Challenge Benchmarks:** Robust comparison under two configurations:
   * **POMDP Challenge:** Masking velocity coordinates to force the agent to infer velocity from state history.
-  * **Delayed Reward Challenge:** Delaying reward feedback by $K=10$ steps to test sparse credit assignment.
-* **Algorithm Distillation (AD):** Pre-trained sequence-conditioned Transformers on trajectories of active policy learning to achieve in-context reinforcement learning.
-* **RLHF (Reinforcement Learning from Human Feedback):** Trained a preference-based reward model from simulated query pairs to align TD3 policies with preferences.
-* **Academic Report:** A complete LaTeX publication draft detailing the RL methodology, benchmarks, and sequence policy evaluation is available at [SAiDL_RL_Report.tex](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.tex).
-* **Mathematical & Engineering Deep-Dive:** See the details in [Optimizations.md](./Reinforcement%20Learning/Documentation/Optimizations.md).
+  * **Delayed Reward Challenge:** Delaying reward feedback by $K=10$ steps.
+* **Algorithm Distillation (AD):** Off-policy distilled online learning histories using Causal Transformers.
+* **RLHF (Reinforcement Learning from Human Feedback):** Preference-based reward models trained from simulated query pairs.
+* **Academic Report:** A complete PDF publication draft detailing the RL methodology, benchmarks, and sequence policy evaluation is available at [SAiDL_RL_Report.pdf](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.pdf).
+* **Mathematical & Engineering Details:** See the details in [Optimizations.md](./Reinforcement%20Learning/Documentation/Optimizations.md).
 
 ---
 
-## 📂 Repository Layout
+## Repository Layout
 
 ```
 SAiDL-Summer-Assignment-2026/
@@ -45,7 +45,7 @@ SAiDL-Summer-Assignment-2026/
 │   ├── extrapolation_test.py    # Tests sequence length extrapolation
 │   ├── benchmark_aft.py         # Benchmarking for AFT variants
 │   └── Documentation/           # Academic reports and task-specific writeups
-│       └── SAiDL_Core-ML_Report.tex # Complete, formatted LaTeX report
+│       └── SAiDL_Core_ML_Report.pdf # Complete, formatted PDF report
 ├── Reinforcement Learning/
 │   ├── td3.py                   # TD3 agent with MLP policy
 │   ├── train.py                 # Baseline TD3 training script
@@ -62,14 +62,15 @@ SAiDL-Summer-Assignment-2026/
 │   ├── eval_ad.py               # Evaluation script for Algorithm Distillation
 │   ├── run_benchmarks.py        # Automated benchmarks for POMDP and delayed rewards
 │   └── Documentation/           # Technical explanations of RL components
+│       └── SAiDL_RL_Report.pdf      # Complete, formatted PDF report
 ```
 
 ---
 
-## ⚙️ Quick Start & Setup
+## Quick Start & Setup
 
 ### 1. Installation
-Clone the repository and install the comprehensive dependencies:
+Clone the repository and install the dependencies:
 ```bash
 git clone https://github.com/LimeLizard3/SAiDL-Summer-Assignment-2026.git
 cd SAiDL-Summer-Assignment-2026
@@ -111,7 +112,7 @@ python train_rlhf.py
 
 ---
 
-## 📊 Core-ML Performance Summary
+## Core-ML Performance Summary
 
 The modular architectures were benchmarked on Perplexity (PPL), Inference Speed, and VRAM footprint:
 
@@ -133,11 +134,11 @@ The modular architectures were benchmarked on Perplexity (PPL), Inference Speed,
 | **HYBRID (Pre-Attn) MQA+ALiBi** | 27,515.80 | 12,075.8 | 526.5 |
 | **HYBRID (Interleaved) MQA+ALiBi** | 28,808.97 | 24,248.7 | 521.3 |
 
-*For in-depth analysis on why specific architectures fail/succeed under context window scaling, see the full [SAiDL_Core-ML_Report.tex](./Core-ML/Documentation/SAiDL_Core-ML_Report.tex).*
+*For in-depth analysis, see the full [SAiDL_Core_ML_Report.pdf](./Core-ML/Documentation/SAiDL_Core_ML_Report.pdf).*
 
 ---
 
-## 📊 Reinforcement Learning Performance Summary
+## Reinforcement Learning Performance Summary
 
 The sequence policy networks (Causal Transformer vs. xLSTM) were benchmarked on Hopper-v5 under two stressors: Partial Observability (POMDP / velocity masking) and Delayed Rewards ($K=10$):
 
@@ -148,19 +149,15 @@ The sequence policy networks (Causal Transformer vs. xLSTM) were benchmarked on 
 | **Delayed Reward ($k=10$)**| Causal Transformer | **399.71** | **399.53** | **137.29 $\pm$ 138.94**| **155.51 $\pm$ 145.47** | 125,000 |
 | | **xLSTM** | 320.02 | 156.71 | 90.23 $\pm$ 85.16 | 106.97 $\pm$ 83.80 | 130,000 |
 
-*For in-depth discussion on memory bottlenecks, state estimation capabilities, and sequence-based policies, see the full [SAiDL_RL_Report.tex](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.tex).*
+*For in-depth discussion, see the full [SAiDL_RL_Report.pdf](./Reinforcement%20Learning/Documentation/SAiDL_RL_Report.pdf).*
 
 ---
 
-## 🛠️ Advanced Engineering & Algorithmic Optimizations
+## Technical & Algorithmic Optimizations
 
-We implemented critical optimizations to scale sequence training and enhance generalization stability:
+Optimizations implemented to scale sequence training and enhance generalization stability:
 
 1. **Scheduled Action Masking & Jitter:** Solves causal confusion and copycat shortcuts in sequence-conditioned imitation learning. The action masking rate is dynamically scheduled: $p_{mask} = \min(0.2 + 0.1 \times \text{epoch}, 0.8)$, forcing the policy to leverage state-history over self-copying.
-2. **Automatic Mixed Precision (AMP):** Utilizes `torch.amp.autocast` and `GradScaler` to double execution speed and decrease GPU memory footprints during sequence training.
-3. **Gradient Accumulation:** Normalizes micro-batch gradients to simulate large batch sizes (e.g. 512) on memory-constrained consumer GPUs.
+2. **Automatic Mixed Precision (AMP):** Utilizes `torch.amp.autocast` and `GradScaler` to speed up execution and reduce GPU memory footprints during sequence training.
+3. **Gradient Accumulation:** Normalizes micro-batch gradients to simulate large batch sizes (e.g. 512) on memory-constrained GPUs.
 4. **Recurrent Loop Projection Offloading:** Moves parallelizable input-to-hidden linear projections outside recurrent loops in xLSTM layers, bypassing kernel launch overheads.
-
----
-
-**Developed by [LimeLizard3] for the SAiDL 2026 Induction Program.** 🟢 🏹 📊

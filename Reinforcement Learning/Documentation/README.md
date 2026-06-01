@@ -1,41 +1,29 @@
-# 🤖 SAiDL Reinforcement Learning: Hardened Control under Partial Observability
+# SAiDL Reinforcement Learning: Continuous Control under Partial Observability
 
-This directory is dedicated to the Reinforcement Learning (RL) component of the **SAiDL Summer Induction Assignment**. Here, we focus on engineering robust sequence-conditioned policies capable of continuous locomotion under partial observability, noisy inputs, and reward delays in the MuJoCo `Hopper-v5` environment.
-
----
-
-## 🚀 Status & Progress
-
-All phases, subtasks, and bonus objectives have been **fully implemented, stabilized, and evaluated**:
-
-*   **Phase 1 (TD3 Baseline):** [COMPLETED] 
-    *   Twin Delayed DDPG (TD3) baseline implemented using Multi-Layer Perceptron (MLP) networks. 
-    *   Trained over 3 seeds for 1,000,000 steps, achieving stable hopping.
-*   **Phase 2 (Causal Transformer):** [COMPLETED]
-    *   Replaced reactive MLP with a sequence-conditioned Causal Transformer policy to retain past historical states and actions.
-    *   Stabilized training via online normalizer correction (independent tracking), Polyak smoothing ($\tau=0.0005$), and gradient clipping ($0.5$).
-*   **Stressor Challenges (POMDP & Credit Delay):** [COMPLETED]
-    *   Tested policy resilience under velocity sensor masking, Gaussian static noise ($\sigma=0.1$), and delayed rewards ($K=10$).
-    *   Proven that context-aware Causal Transformers outperform reactive MLPs by performing implicit temporal calculus on position history.
-*   **Jury-Aligned RLHF:** [COMPLETED]
-    *   Trained a Pessimistic Consensus Jury of 3 reward models using simulated preferences.
-    *   Stabilized online alignment using the Eternal Textbook protocol to prevent catastrophic forgetting.
-*   **In-Context Algorithm Distillation (Bonus C):** [COMPLETED]
-    *   Offline distilled online learning histories using Scheduled Action Masking ($20\% \to 80\%$ dropout) and Context Jitter.
-    *   Successfully evaluated in-context adaptation online in MuJoCo, achieving a peak reward $>600$ without backpropagation.
-*   **Recurrent xLSTM Policies (Bonus D):** [COMPLETED]
-    *   Integrated mLSTM/sLSTM stacks as the recurrent policy backbone.
-    *   Optimized GPU performance via Recurrent Loop Projection Offloading.
+This directory contains the Reinforcement Learning (RL) component of the SAiDL Summer Induction Assignment. The focus is on implementing robust sequence-conditioned policies for continuous locomotion under partial observability, noisy inputs, and reward delays in the MuJoCo `Hopper-v5` environment.
 
 ---
 
-## 📂 Documentation & Code Explanations
+## Status & Progress
 
-We have compiled detailed, line-by-line guides and theoretical breakdowns for all files in this module:
+All phases, tasks, and bonus objectives have been implemented and evaluated:
+
+* **Phase 1 (TD3 Baseline):** Twin Delayed DDPG (TD3) baseline policy using MLP networks trained over 1,000,000 steps.
+* **Phase 2 (Causal Transformer):** Replaced the reactive MLP with a sequence-conditioned Causal Transformer policy. Stabilized training via independent normalizer tracking, Polyak smoothing ($\tau=0.0005$), and gradient clipping ($0.5$).
+* **Stressor Challenges (POMDP & Credit Delay):** Evaluated policy resilience under velocity sensor masking, Gaussian static noise ($\sigma=0.1$), and delayed rewards ($K=10$).
+* **Jury-Aligned RLHF:** Trained an ensemble of 3 reward models using simulated preferences, aligned via the Eternal Textbook replay mixture.
+* **In-Context Algorithm Distillation (Bonus C):** Distilled online learning histories using Causal Transformers with Scheduled Action Masking ($20\% \to 80\%$ dropout) and context jitter.
+* **Recurrent xLSTM Policies (Bonus D):** Integrated mLSTM/sLSTM stacks as the recurrent policy backbone, optimized via loop projection offloading.
+
+---
+
+## Documentation & Code Walkthroughs
+
+Detailed reviews and walkthroughs for all files in this module:
 
 | Document | Covered Files | Description |
 | :--- | :--- | :--- |
-| **[Report.tex](./SAiDL_RL_Report.tex)** | All Files | Complete LaTeX academic paper detailing findings. |
+| **[Report.pdf](./SAiDL_RL_Report.pdf)** | All Files | Complete PDF academic paper detailing findings. |
 | **[Optimizations.md](./Optimizations.md)** | All Files | Mathematical and engineering optimizations log. |
 | **[TD3 Architecture](./td3_explanation.md)** | [`td3.py`](../td3.py) | Clipped double-Q, target smoothing, and delay updates. |
 | **[MLP Training](./train_explanation.md)** | [`train.py`](../train.py) | Baseline MLP control loop and execution. |
