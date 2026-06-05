@@ -459,6 +459,10 @@ We benchmarked three variants of Positional Encodings (PE) on the hidden-velocit
     \end{equation}
     where $\theta = 10000^{-2(i-1)/d_{\text{model}}}$. This naturally encodes the relative distance between tokens geometrically and preserves translation invariance, enabling robust long-horizon dependency tracking.
 \end{itemize}
+
+\paragraph{A Note on Positional Interpolation (Context Window Scaling):}
+While techniques like Linear Position Interpolation (scaling the rotation angle ratios of RoPE by the context ratio to extrapolate to longer sequences) are popular in large language models, we did not implement this mechanism. Since our context window is fixed to a maximum sequence length of $L=32$ transitions (which provides sufficient temporal memory to reconstruct missing physical derivatives), context window extrapolation beyond this boundary was not required for the control task.
+
 Our evaluations, shown in Figure \ref{fig:pos_enc_ablation}, demonstrate that without positional encodings, the Transformer remains "time-blind" and fails to calculate the temporal derivatives needed for balance. Sinusoidal Encodings provided the most stable performance, preventing policy collapse and allowing the agent to settle into a sub-millimeter balance.
 
 \begin{figure}[!ht]

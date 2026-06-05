@@ -212,23 +212,12 @@ class TransformerLM(nn.Module):
         Outputs: (cos, sin) tensors of shape [seq_len, d_k]
         """
         need_recompute = (not hasattr(self, 'rope_cache') or 
-                          self.rope_cache['cos'].size(0) < seq_len) #If we don't have cache or the cached sequence length is smaller than 
-                                                                    #current one, we'll have to recompute it from the start
-        if self.config.rope_use_interpolation and hasattr(self, 'rope_cache'):
-            # If interpolation is enabled, we must recompute if active seq_len differs from cached size
-            if self.rope_cache['cos'].size(0) != seq_len:
-                need_recompute = True
-
+                          self.rope_cache['cos'].size(0) < seq_len)
         if need_recompute:
             d_k = self.config.d_model // self.config.n_heads
             # Calculate inverse frequencies for relative positioning
             inv_freq = 1.0 / (10000**(torch.arange(0, d_k, 2).float().to(device) / d_k))
             t = torch.arange(seq_len, device=device).type_as(inv_freq)
-            
-            if self.config.rope_use_interpolation and seq_len > self.config.rope_train_seq_len:
-                # Squeeze the indices to keep the maximum frequency angle within the training range
-                scale = seq_len / self.config.rope_train_seq_len
-                t = t / scale
                 
             # Outer product of time index and frequencies: shape [seq_len, d_k/2]
             freqs = torch.einsum('i,j->ij', t, inv_freq)
