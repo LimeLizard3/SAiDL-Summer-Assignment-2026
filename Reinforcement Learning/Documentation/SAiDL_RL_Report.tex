@@ -570,7 +570,15 @@ n_t &= e^{f_t} n_{t-1} + e^{i_t} \\
 h_t &= \sigma(o_t) \odot \frac{c_t}{n_t}
 \end{aligned}
 \end{equation}
-where $f_t$, $i_t$, and $o_t$ are the forget, input, and output gates, $c_t$ is the cell state, $n_t$ is the running normalizer state, and $h_t$ is the hidden state. This makes xLSTM an extremely attractive recurrent backbone for sequence-conditioned policies.
+where $f_t, i_t, o_t$ are the gates, $c_t$ is the cell state, and $n_t$ is the normalizer. For the mLSTM, the matrix memory $C_t$ is updated via a covariance-like outer product of value ($v_t$) and key ($k_t$) vectors:
+\begin{equation}
+C_t = f_t C_{t-1} + i_t v_t k_t^T
+\end{equation}
+To prevent numerical overflow from exponential gating, we implement a scalar log-stabilizer $m_t$ to maintain stable value scales:
+\begin{equation}
+m_t = \max\left(\log f_t + m_{t-1}, \, \log i_t\right)
+\end{equation}
+This makes xLSTM an extremely attractive recurrent backbone for sequence-conditioned policies.
 
 However, standard recurrent networks require looping sequentially over time steps ($t = 1, \dots, L$). In PyTorch, performing linear projections (generating Queries, Keys, Values, and gating weights) inside this sequential loop for every timestep incurs substantial GPU kernel launch overhead, leaving the GPU underutilized. We resolved this bottleneck using \textbf{Recurrent Loop Projection Offloading}. All input-to-hidden linear projections that depend solely on the input sequence are pre-computed in parallel outside the recurrence loop. The recurrence loop then simply slices these pre-computed tensors at each step, reducing the sequential recurrence to pure element-wise cell updates and bypassing GPU latency bottlenecks.
 
