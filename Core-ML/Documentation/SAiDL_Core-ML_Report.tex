@@ -67,6 +67,10 @@ Absolute positional encodings fail mathematically when evaluating sequence lengt
     \item \textbf{Attention with Linear Biases (ALiBi)}: Removes positional embeddings entirely in favor of a static, non-learned distance penalty applied directly to the attention logits.
 \end{itemize}
 
+\paragraph{A Note on Positional Interpolation:}
+Although the assignment optionally suggests implementing Positional Interpolation (scaling RoPE frequencies to fit longer context windows during evaluation), we did not implement this extension. Since standard RoPE and ALiBi successfully completed the sequence extrapolation tests (generalizing up to $L_{\text{test}}=2048$ tokens without numerical failure), interpolation was not necessary to meet the task's performance goals.
+
+
 \subsection{Task 4: Convolution + Attention Hybrids}
 To enhance the model's ability to capture short-range syntactic structures (n-grams) before engaging global attention, we implemented Causal 1D Convolutions using two designs:
 \begin{itemize}
