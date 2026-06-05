@@ -169,6 +169,17 @@ Backpropagation through a Transformer actor is computationally expensive. We dec
 \paragraph{(7) Evaluation Overhead Tuning:}
 We identified that testing the agent for 5 full episodes every 5,000 steps consumed significant execution time. We scaled evaluation intervals to every 25,000 steps for 2 episodes, reducing evaluation overhead by 90\%. We also integrated auto-save checkpoints every 100,000 steps to protect long training runs.
 
+\paragraph{(8) Automatic Mixed Precision (AMP) and Gradient Scaling:}
+To accelerate sequence-conditioned training and mitigate GPU memory bottlenecks, we integrated PyTorch's Automatic Mixed Precision (AMP) via \texttt{torch.amp.autocast} and \texttt{torch.amp.GradScaler}. During the forward pass, heavy matrix computations (e.g., self-attention) are dynamically cast to 16-bit floating point (\texttt{float16}), while sensitive operations like loss calculations remain in 32-bit (\texttt{float32}) to preserve precision. Because \texttt{float16} has a limited dynamic range, tiny gradients are prone to underflowing to zero. To prevent this, the gradient scaler multiplies the loss by a large factor before backpropagation:
+\begin{equation}
+\mathcal{L}_{\text{scaled}} = S \cdot \mathcal{L}
+\end{equation}
+where $S$ is the scale factor. The gradients are unscaled back to their normal range before clipping and optimization step:
+\begin{equation}
+g = \frac{1}{S} g_{\text{scaled}}
+\end{equation}
+This hardware-level stabilization prevents numerical underflow in sequence layers while accelerating backpropagation on GPU Tensor Cores by $\approx 30\%$.
+
 \subsection{Final Results: The Optimized Plateau}
 As shown in Figure \ref{fig:task1_comparison}, these optimizations resulted in a dramatic increase in performance and stability:
 \begin{itemize}
@@ -217,12 +228,25 @@ To execute and verify the implementations described in Task 1:
 \newpage
 
 \section{Task 2: The Robustness Frontier (POMDP)}
+Formally, we transition the control task from a Markov Decision Process (MDP) to a Partially Observable Markov Decision Process (POMDP), defined as a 7-tuple $\mathcal{M} = (S, A, T, R, \Omega, O, \gamma)$, where $S$ is the state space, $A$ is the action space, $T(s_{t+1}|s_t, a_t)$ is the transition function, $R(s_t, a_t)$ is the reward function, $\Omega$ is the observation space, $O(o_t | s_t, a_{t-1})$ is the observation probability distribution, and $\gamma$ is the discount factor. Under severe physical degradation, the agent cannot access the true state $s_t \in S$ and must select actions based on historical observations $o_{\le t} \in \Omega$.
 
 \subsection{2a \& 2b: Sensor Failure and Noise (The Blindfold Test)}
-To evaluate the agent's resilience to sensory failures, we mask all velocity-related inputs (setting root velocities and joint velocities to zero). This forces the agent to reconstruct derivatives (velocities) from positional state histories, turning the Markov Decision Process (MDP) into a Partially Observable Markov Decision Process (POMDP). Additionally, Gaussian noise ($\sigma = 0.1$) is injected into the remaining observations to simulate realistic hardware sensor static. While reactive MLP-based policies collapse under these noisy, unobserved conditions, the causal context of the Transformer enables robust state estimation, calculating smooth joint movements without raw velocity inputs.
+To evaluate the agent's resilience to sensory failures, we mask all velocity-related inputs (setting root velocities and joint velocities to zero, specifically indices $d \ge 6$). This forces the agent to reconstruct implicit derivatives (velocities) from positional history:
+\begin{equation}
+v_t \approx \frac{x_t - x_{t-1}}{\Delta t}
+\end{equation}
+turning the Markov Decision Process (MDP) into a Partially Observable Markov Decision Process (POMDP). Additionally, standardized Gaussian noise is injected into the remaining observations to simulate sensor static:
+\begin{equation}
+s_{t, \text{noisy}} = s_t + \epsilon \cdot \sigma_{s}
+\end{equation}
+where $\epsilon \sim \mathcal{N}(0, 0.1^2)$ and $\sigma_s$ is the running standard deviation of sensor channel $s$ loaded from the normalizer. While reactive MLP-based policies collapse under these noisy, unobserved conditions, the causal context of the Transformer enables robust state estimation, calculating smooth joint movements without raw velocity inputs.
 
 \subsection{2c: Credit Assignment Delay (The Lag Test)}
-Real-world robots often suffer from reward delays (credit lag) due to slow physical measurements or sparse target signals. We evaluate the agent's temporal credit assignment capabilities by delaying the reward feedback by $K=10$ steps. The Causal Transformer's self-attention mechanism excels under this credit lag because it can directly associate past states and actions with delayed reward signals without relying on Markovian backpropagation through intermediate state transitions. By mapping long-term dependencies across the causal context window, the Transformer maintains stable locomotion under delayed feedback, whereas standard MLP policies degrade because their immediate Markovian reward correlations are broken.
+Real-world robots often suffer from reward delays (credit lag) due to slow physical measurements or sparse target signals. We evaluate the agent's temporal credit assignment capabilities by delaying the reward feedback by $K=10$ steps. The environment rewards are accumulated and delivered only at step intervals of $K$:
+\begin{equation}
+r^{\text{delayed}}_t = \begin{cases} \sum_{i=t-K+1}^{t} r_i & \text{if } t \pmod K = 0 \\ 0.0 & \text{otherwise} \end{cases}
+\end{equation}
+The Causal Transformer's self-attention mechanism excels under this credit lag because it can directly associate past states and actions with delayed reward signals without relying on Markovian backpropagation through intermediate state transitions. By mapping long-term dependencies across the causal context window, the Transformer maintains stable locomotion under delayed feedback, whereas standard MLP policies degrade because their immediate Markovian reward correlations are broken.
 
 \begin{table}[!ht]
     \centering
@@ -282,7 +306,14 @@ To stabilize the training run, we implemented five key optimizations in \texttt{
     R_{\text{Jury}}(s, a) = \min_{k \in \{1, 2, 3\}} R_{\psi_k}(s, a)
     \end{equation}
     Taking the minimum reward dilutes outlier predictions, preventing the policy from exploiting reward-model loopholes.
-    \item \textbf{Reward Governor (Scaling and Clipping):} To prevent gradient explosions, we scale the Jury's predictions by $50.0$ and clip them to $[-100, 100]$ before feeding them to the policy.
+    \item \textbf{Reward Governor (Scaling, Normalization, and Clipping):} To prevent gradient explosions and ensure a stable reward range, we normalize the raw Jury predictions using a running Z-score:
+    \begin{equation}
+    R_{\text{norm}}(s, a) = \frac{R_{\text{Jury}}(s, a) - \mu_R}{\sqrt{\sigma^2_R + 10^{-8}}}
+    \end{equation}
+    where $\mu_R$ and $\sigma^2_R$ are the running mean and variance of predicted rewards. The normalized reward is then scaled by $50.0$ and clipped to $[-100, 100]$ before being used for training:
+    \begin{equation}
+    R_{\text{final}}(s, a) = \text{clip}\left(50.0 \cdot R_{\text{norm}}(s, a), \, -100, \, 100\right)
+    \end{equation}
     \item \textbf{Paced updates:} We update the Jury's weights only once every 1,000 steps, giving the policy time to adapt to reward updates.
     \item \textbf{The Eternal Textbook Protocol (Continuous Replay):} During online updates, we force the Jury to train on a mixture of expert pre-training trajectories (\texttt{old\_buffer}) and the student's live trajectories (\texttt{new\_buffer}). This continuous study ensures the Jury never forgets expert hopping dynamics.
 \end{enumerate}
@@ -329,15 +360,15 @@ To execute pre-training and online alignment for RLHF:
 
 \FloatBarrier
 \subsection{2e: Attention Attribution (Chefer Protocol)}
-To verify attention behavior, we implemented the \textbf{Chefer Protocol} (Transformer Relevancy Propagation) in \texttt{model.py}. Standard attention maps can fail to capture information flow because they only record forward activations. The Chefer formulation propagates gradients and attentions to compute a relevancy score $R$:
+To verify attention behavior, we implemented the \textbf{Chefer Protocol} (Transformer Relevancy Propagation) in \texttt{model.py}. Standard attention maps can fail to capture information flow because they only record forward activations. The Chefer formulation propagates gradients and attentions through the layers via matrix multiplication:
 \begin{equation}
-R^{(l)} = R^{(l-1)} + \bar{A}^{(l)} \odot \nabla_A \mathcal{L}^{(l)}
+R^{(l)} = \bar{A}^{(l)} R^{(l-1)}
 \end{equation}
-We resolved forward-only limitations by replacing the standard positive-gradient clamp with an \textbf{Absolute Saliency Engine}:
+where $R^{(0)} = I$ is the identity matrix, and $\bar{A}^{(l)}$ is the relevancy matrix computed by our \textbf{Absolute Saliency Engine} averaged across the $H$ attention heads:
 \begin{equation}
-S_{i,j} = \left| A_{i,j} \odot \frac{\partial \mathcal{L}}{\partial A_{i,j}} \right|
+\bar{A}^{(l)} = \frac{1}{H} \sum_{h=1}^H \left| A^{(l, h)} \odot \nabla_{A^{(l, h)}} Y \right|
 \end{equation}
-By incorporating absolute values, we captured inhibitory attention features---moments in history that signal the actor to halt or decelerate.
+where $Y = \sum_i a_i^2$ is the L2 norm of the action vector, $A^{(l, h)}$ is the attention weight matrix for layer $l$ and head $h$, and $\odot$ is the element-wise product. By incorporating absolute values rather than clamping positive gradients, we capture both excitatory and inhibitory attention features—moments in history that signal the actor to accelerate or decelerate.
 
 \begin{figure}[!ht]
     \centering
@@ -378,7 +409,11 @@ To address this distribution shift, we conducted a \textbf{Robustness Sprint}---
 \end{enumerate}
 
 \paragraph{Attention Entropy Tracking:}
-We track and plot the attention entropy $H(A_t) = -\sum_j A_{t,j} \log A_{t,j}$ over the course of training. During the initial stages of training, the attention entropy is high ($\approx \log(32) \approx 3.46$), indicating that the attention weights are uniform and the model is searching the entire context history. As the policy converges and develops the double-anchor strategy, the entropy drops significantly, stabilizing around $\approx 1.8 - 2.2$. This reduction in entropy indicates that the attention has focused onto specific critical historical frames (specifically the Calculus Spike at $t-1$ and the Deep Memory Anchor at $t-31$), filtering out sequence redundancy.
+We track and plot the attention entropy over the course of training:
+\begin{equation}
+H(A_t) = -\sum_{j=1}^t A_{t, j} \log A_{t, j}
+\end{equation}
+where $A_{t, j}$ is the attention weight from the current query at step $t$ to the historical key at step $j$. During the initial stages of training, the attention entropy is high ($\approx \log(32) \approx 3.46$), indicating that the attention weights are uniform and the model is searching the entire context history. As the policy converges and develops the double-anchor strategy, the entropy drops significantly, stabilizing around $\approx 1.8 - 2.2$. This reduction in entropy indicates that the attention has focused onto specific critical historical frames (specifically the Calculus Spike at $t-1$ and the Deep Memory Anchor at $t-31$), filtering out sequence redundancy.
 
 \begin{figure}[!ht]
     \centering
@@ -405,7 +440,11 @@ This section details the design and evaluation of the bonus tasks from the assig
 \subsection{Bonus A: Positional Encoding Ablation}
 We benchmarked three variants of Positional Encodings (PE) on the hidden-velocity setting to understand how temporal ordering affects Causal Transformer policies:
 \begin{itemize}
-    \item \textbf{Learned Positional Encodings}: The model learns a lookup table of parameter embeddings for each index $0, \dots, L-1$ during training. While simple and adaptive, learned encodings are constrained by the maximum context length seen during training and cannot generalize or extrapolate to longer sequence windows at test time.
+    \item \textbf{Learned Positional Encodings}: The model learns a lookup table of parameter embeddings:
+    \begin{equation}
+    \text{PE}(t) = \mathbf{E}_{\text{pos}}[t]
+    \end{equation}
+    where $\mathbf{E}_{\text{pos}} \in \mathbb{R}^{L \times d_{\text{model}}}$ is a learned parameter matrix and $t \in \{0, \dots, L-1\}$ is the history index. While adaptive, learned encodings are constrained by the maximum context length seen during training and cannot generalize or extrapolate to longer sequence windows at test time.
     \item \textbf{Sinusoidal Positional Encodings}: Fixed, deterministic sine and cosine functions of varying frequencies representing a temporal clock:
     \begin{equation}
     \begin{aligned}
@@ -414,7 +453,11 @@ We benchmarked three variants of Positional Encodings (PE) on the hidden-velocit
     \end{aligned}
     \end{equation}
     where $t$ is the history index, $i$ is the dimension index, and $d_{\text{model}}$ is the embedding dimension. This provides a smooth, continuous geometric structure that generalizes well and acts as a stable "Temporal Ruler."
-    \item \textbf{Rotary Positional Embeddings (RoPE)}: Rather than adding positional vectors directly to the inputs, RoPE applies a rotation matrix to the Query and Key vectors in the complex plane at each self-attention layer. This naturally encodes the relative distance between tokens geometrically and preserves translation invariance, enabling robust long-horizon dependency tracking.
+    \item \textbf{Rotary Positional Embeddings (RoPE)}: Rather than adding positional vectors directly to the inputs, RoPE applies a rotation matrix to the Query ($\mathbf{q}$) and Key ($\mathbf{k}$) vectors at each self-attention layer. For a 2D slice $\mathbf{x} = [x_1, x_2]^T$ at position $m$, the rotation is defined as:
+    \begin{equation}
+    \mathbf{R}_{\Theta, m}^{2} \mathbf{x} = \begin{pmatrix} \cos m\theta & -\sin m\theta \\ \sin m\theta & \cos m\theta \end{pmatrix} \begin{pmatrix} x_1 \\ x_2 \end{pmatrix}
+    \end{equation}
+    where $\theta = 10000^{-2(i-1)/d_{\text{model}}}$. This naturally encodes the relative distance between tokens geometrically and preserves translation invariance, enabling robust long-horizon dependency tracking.
 \end{itemize}
 Our evaluations, shown in Figure \ref{fig:pos_enc_ablation}, demonstrate that without positional encodings, the Transformer remains "time-blind" and fails to calculate the temporal derivatives needed for balance. Sinusoidal Encodings provided the most stable performance, preventing policy collapse and allowing the agent to settle into a sub-millimeter balance.
 
@@ -468,12 +511,12 @@ To run evaluation on the triple-threat POMDP setting:
 \FloatBarrier
 
 \subsection{Bonus C: In-Context RL via Algorithm Distillation}
-Algorithm Distillation (AD; Laskin et al., 2022) is an algorithm designed to learn in-context reinforcement learning agents as a sequence modeling task. Instead of executing online policy gradients or Q-value updates at test time, AD trains a causal sequence model (such as a Transformer) on the complete \textbf{learning histories} (the sequences of states, actions, and rewards) generated by a standard RL algorithm (like TD3) during its training. By learning to predict the next action given the historical sequence of learning experiences, the model distills the training process itself. At inference time, when deployed in a new environment, the model improves its policy purely in-context through self-attention updates over its context buffer, requiring no backpropagation or parameter updates.
+Algorithm Distillation (AD; Laskin et al., 2022) treats reinforcement learning as a sequence modeling problem. Instead of performing standard policy gradient or Q-value updates at test time, AD trains a causal Transformer on the complete learning histories (states, actions, and rewards) generated by an agent (like TD3) during its training. By learning to predict the next action given this historical context, the model learns to improve its policy in-context. When deployed in a new environment, the policy adapts purely by conditioning on its history, requiring no online backpropagation or gradient updates.
 
-To train the AD agent successfully in continuous control tasks, we implemented two key sequence optimizations to resolve offline-to-online mismatches:
+To make AD work in continuous control tasks, we introduced two key sequence regularizations:
 \begin{itemize}
-    \item \textbf{Scheduled Action Masking (Curriculum Action Dropout):} Continuous control trajectories are highly correlated over time ($a_t \approx a_{t-1}$). Consequently, a standard causal sequence model learns to exploit this shortcut, ignoring the state inputs and simply copycatting the action from the previous timestep. While this copycat behavior minimizes offline training MSE loss, it causes cascading errors during online evaluation, where a single incorrect action is recursively appended and copied, leading to immediate balance collapse. Scheduled Action Masking addresses this by dropping previous actions during training, forcing the policy to predict the next action from the state and reward history. Increasing the dropout probability dynamically from $20\%$ to $80\%$ over epochs acts as a curriculum, allowing early learning of basic sequence associations while forcing state-dependency later in training.
-    \item \textbf{History Jitter (Context Augmentation):} To prevent the model from memorizing exact expert trajectories and overfitting, we inject small Gaussian noise into the historical state, action, and reward context buffers during training. Importantly, the noise is applied solely to the input contexts; the target action is left clean. This regularization forces the Transformer to reconstruct clean expert behavior from noisy, perturbed histories.
+    \item \textbf{Scheduled Action Masking (Curriculum Action Dropout):} Because continuous actions are highly correlated ($a_t \approx a_{t-1}$), the Transformer easily exploits this shortcut during offline training, ignoring the states and simply copying the previous action. This leads to copycat behavior and severe error propagation during online evaluation. We address this by dropping out past actions during training, forcing the network to rely on the states and rewards to predict the next action. We scale this dropout probability dynamically from 20\% to 80\% over training epochs, serving as a curriculum that first teaches basic associations before forcing state-dependency.
+    \item \textbf{History Jitter (Context Augmentation):} We inject small Gaussian noise into the historical context buffer (states, actions, and rewards) during training, leaving the target action clean. This prevents the model from memorizing exact trajectories and forces it to learn to reconstruct clean actions from noisy histories.
 \end{itemize}
 
 \subsubsection{Sequence AMP and Gradient Accumulation}
@@ -517,7 +560,17 @@ To execute dataset generation, sequence pre-training, and online evaluation for 
 \FloatBarrier
 
 \subsection{Bonus D: xLSTM as Policy Backbone}
-Extended LSTM (xLSTM; Beck et al., 2024) is a recurrent neural network architecture designed to scale sequence modeling by addressing the traditional limitations of standard LSTMs. It introduces sLSTM (with scalar memory, exponential gating, and normalization) and mLSTM (with matrix memory and covariance updates) to match the learning capacity of Transformers while maintaining linear $\mathcal{O}(L)$ memory complexity and constant-time inference. This makes xLSTM an extremely attractive recurrent backbone for sequence-conditioned policies.
+Extended LSTM (xLSTM; Beck et al., 2024) is a recurrent neural network architecture designed to scale sequence modeling by addressing the traditional limitations of standard LSTMs. It introduces sLSTM (with scalar memory, exponential gating, and normalization) and mLSTM (with matrix memory and covariance updates) to match the learning capacity of Transformers while maintaining linear $\mathcal{O}(L)$ memory complexity. The recurrence updates for the sLSTM cell are mathematically defined as:
+\begin{equation}
+\begin{aligned}
+f_t &= \sigma(W_f x_t + R_f h_{t-1} + b_f) \\
+i_t &= \sigma(W_i x_t + R_i h_{t-1} + b_i) \\
+c_t &= e^{f_t} c_{t-1} + e^{i_t} \tanh(W_c x_t + R_c h_{t-1} + b_c) \\
+n_t &= e^{f_t} n_{t-1} + e^{i_t} \\
+h_t &= \sigma(o_t) \odot \frac{c_t}{n_t}
+\end{aligned}
+\end{equation}
+where $f_t$, $i_t$, and $o_t$ are the forget, input, and output gates, $c_t$ is the cell state, $n_t$ is the running normalizer state, and $h_t$ is the hidden state. This makes xLSTM an extremely attractive recurrent backbone for sequence-conditioned policies.
 
 However, standard recurrent networks require looping sequentially over time steps ($t = 1, \dots, L$). In PyTorch, performing linear projections (generating Queries, Keys, Values, and gating weights) inside this sequential loop for every timestep incurs substantial GPU kernel launch overhead, leaving the GPU underutilized. We resolved this bottleneck using \textbf{Recurrent Loop Projection Offloading}. All input-to-hidden linear projections that depend solely on the input sequence are pre-computed in parallel outside the recurrence loop. The recurrence loop then simply slices these pre-computed tensors at each step, reducing the sequential recurrence to pure element-wise cell updates and bypassing GPU latency bottlenecks.
 

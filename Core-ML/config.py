@@ -20,6 +20,8 @@ class TransformerConfig:
     
     # Positional Variants (Task 3)
     pos_type: str = "absolute" # Options: "absolute", "rope", "alibi"
+    rope_use_interpolation: bool = False
+    rope_train_seq_len: int = 512
     
     # Convolution Hybrids (Task 4)
     use_conv: bool = False
